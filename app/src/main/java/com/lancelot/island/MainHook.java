@@ -42,9 +42,13 @@ public class MainHook implements IXposedHookLoadPackage {
                     try {
                         XposedBridge.log(TAG + "hook disparado, args=" + param.args.length);
                         if (param.args.length > 0
-                                && param.args[0] instanceof StatusBarNotification
-                                && param.thisObject instanceof Context) {
-                            manejar((Context) param.thisObject, (StatusBarNotification) param.args[0]);
+                                && param.args[0] instanceof StatusBarNotification) {
+                            Context ctx = contexto(param.thisObject);
+                            if (ctx == null) {
+                                XposedBridge.log(TAG + "sin contexto, no se puede mostrar");
+                                return;
+                            }
+                            manejar(ctx, (StatusBarNotification) param.args[0]);
                         }
                     } catch (Throwable t) {
                         XposedBridge.log(t);
@@ -129,6 +133,28 @@ public class MainHook implements IXposedHookLoadPackage {
         PendingIntent accion = n.contentIntent;
         XposedBridge.log(TAG + "mostrando isla: " + titulo);
         IslandController.get(ctx).show(titulo, texto, icono, accion);
+    }
+
+    /**
+     * El listener de SystemUI no es un Service "de verdad": su contexto base es null,
+     * asi que no sirve como Context. Usamos la Application de SystemUI.
+     */
+    private static Context contexto(Object listener) {
+        try {
+            Object app = XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("android.app.ActivityThread", null),
+                    "currentApplication");
+            if (app instanceof Context) return (Context) app;
+        } catch (Throwable t) {
+            XposedBridge.log(t);
+        }
+        try {
+            Object c = XposedHelpers.getObjectField(listener, "mSystemContext");
+            if (c instanceof Context) return (Context) c;
+        } catch (Throwable ignorado) {
+            // sin plan C
+        }
+        return null;
     }
 
     private static boolean isEmpty(CharSequence s) {
