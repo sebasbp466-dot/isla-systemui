@@ -90,6 +90,16 @@ public class MainHook implements IXposedHookLoadPackage {
             return;
         }
 
+        IslaConfig cfg = IslaConfig.load(ctx);
+        if (!cfg.enabled) {
+            XposedBridge.log(TAG + "ignorada: isla desactivada en los ajustes");
+            return;
+        }
+        if (cfg.isBlocked(sbn.getPackageName())) {
+            XposedBridge.log(TAG + "ignorada: app bloqueada " + sbn.getPackageName());
+            return;
+        }
+
         Bundle e = n.extras;
         CharSequence titulo = e != null ? e.getCharSequence(Notification.EXTRA_TITLE) : null;
         CharSequence texto = e != null ? e.getCharSequence(Notification.EXTRA_TEXT) : null;
@@ -132,7 +142,7 @@ public class MainHook implements IXposedHookLoadPackage {
 
         PendingIntent accion = n.contentIntent;
         XposedBridge.log(TAG + "mostrando isla: " + titulo);
-        IslandController.get(ctx).show(titulo, texto, icono, accion);
+        IslandController.get(ctx).show(cfg, titulo, texto, icono, accion);
     }
 
     /**
