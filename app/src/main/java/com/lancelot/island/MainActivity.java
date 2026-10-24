@@ -254,7 +254,7 @@ public class MainActivity extends Activity {
         vlp.topMargin = dp(8);
         p.addView(vista, vlp);
         refrescar();
-        texto(p, "Arriba: expandida. Abajo: compacta (así entra y sale).", 12, false, cSub);
+        texto(p, "Arriba: expandida. Abajo: compacta con hueco para la cámara.", 12, false, cSub);
 
         // ---- Estilo de la isla
         LinearLayout s = tarjeta(col, "Estilo de la isla");
@@ -285,6 +285,65 @@ public class MainActivity extends Activity {
             }
         });
 
+        // ---- Funciones
+        LinearLayout fu = tarjeta(col, "Qué muestra la isla");
+        interruptor(fu, "Notificaciones", cfg.fNotif, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fNotif = v == 1;
+            }
+        });
+        interruptor(fu, "Música (cápsula con ecualizador)", cfg.fMusica, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fMusica = v == 1;
+            }
+        });
+        interruptor(fu, "Carga", cfg.fCarga, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fCarga = v == 1;
+            }
+        });
+        interruptor(fu, "Batería baja y carga completa", cfg.fBateria, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fBateria = v == 1;
+            }
+        });
+        interruptor(fu, "Linterna", cfg.fLinterna, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fLinterna = v == 1;
+            }
+        });
+        interruptor(fu, "Modo de sonido", cfg.fTimbre, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fTimbre = v == 1;
+            }
+        });
+        interruptor(fu, "Auriculares y Bluetooth", cfg.fAuric, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fAuric = v == 1;
+            }
+        });
+
+        // ---- Posición
+        LinearLayout po = tarjeta(col, "Posición al expandirse");
+        texto(po, "La cápsula compacta siempre queda en el notch. Al expandirse puede bajar "
+                + "debajo de la barra de estado (no tapa la hora ni los iconos) o ir encima.",
+                12, false, cSub);
+        segmentado(po, new String[]{"Bajo la barra", "Sobre la barra"}, cfg.expandedPos,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.expandedPos = v;
+                        reconstruir();
+                    }
+                });
+
         // ---- Tamaño y posición
         LinearLayout z = tarjeta(col, "Tamaño y posición");
         seek(z, "Ancho expandida", 200, 360, cfg.widthDp, dpTxt(), new IntSetter() {
@@ -299,13 +358,13 @@ public class MainActivity extends Activity {
                 cfg.heightDp = v;
             }
         });
-        seek(z, "Ancho compacta", 90, 200, cfg.compactW, dpTxt(), new IntSetter() {
+        seek(z, "Ancho mínimo compacta", 90, 200, cfg.compactW, dpTxt(), new IntSetter() {
             @Override
             public void set(int v) {
                 cfg.compactW = v;
             }
         });
-        seek(z, "Margen superior", 0, 60, cfg.topDp, dpTxt(), new IntSetter() {
+        seek(z, "Ajuste vertical al expandir", 0, 60, cfg.topDp, dpTxt(), new IntSetter() {
             @Override
             public void set(int v) {
                 cfg.topDp = v;
@@ -385,6 +444,20 @@ public class MainActivity extends Activity {
                 probar();
             }
         });
+
+        // ---- Pruebas de eventos (se envían a SystemUI, no hace falta cargar ni encender nada)
+        LinearLayout pr = tarjeta(col, "Probar eventos");
+        texto(pr, "Guarda los ajustes y manda el evento a la isla.", 12, false, cSub);
+        filaPrueba(pr, "Carga", 1, "Linterna", 2);
+        filaPrueba(pr, "Linterna apagada", 3, "Música", 4);
+        filaPrueba(pr, "Modo silencio", 5, "Auriculares", 6);
+        filaPrueba(pr, "Batería baja", 7, "Batería llena", 8);
+        boton(pr, "Quitar la música de prueba", CON, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                probarEvento(9);
+            }
+        });
         boton(ac, "Restablecer valores", CON, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -406,26 +479,30 @@ public class MainActivity extends Activity {
         if (vista == null) return;
         vista.removeAllViews();
 
-        int h1 = dp(cfg.heightDp);
-        IslandView grande = new IslandView(this, cfg);
-        grande.setExpanded(true);
+        Evento muestra = new Evento(Evento.NOTIF);
+        muestra.titulo = "Isla SystemUI";
+        muestra.texto = "Así se verá tu notificación";
+        muestra.icono = getDrawable(android.R.drawable.sym_def_app_icon);
+
+        int h1 = dp(IslandView.alturaDp(cfg, muestra));
+        IslandView grande = new IslandView(this, cfg, 0);
+        grande.configurar(muestra, true, false);
         grande.setCorner(Math.min(dp(cfg.radiusDp), h1 / 2f));
-        grande.bind("Isla SystemUI", "Así se verá tu notificación",
-                getDrawable(android.R.drawable.sym_def_app_icon));
         FrameLayout.LayoutParams l1 = new FrameLayout.LayoutParams(
                 dp(cfg.widthDp), h1, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        l1.topMargin = dp(cfg.topDp);
+        l1.topMargin = dp(8);
         vista.addView(grande, l1);
 
-        int h2 = dp(IslandView.COMPACT_H_DP);
-        IslandView chica = new IslandView(this, cfg);
-        chica.setExpanded(false);
+        // Compacta de ejemplo con un notch de 28 dp: el hueco queda en medio
+        int notch = dp(28);
+        int h2 = dp(30);
+        IslandView chica = new IslandView(this, cfg, notch);
+        chica.configurar(muestra, false, false);
         chica.setCorner(h2 / 2f);
-        chica.bind("Isla SystemUI", "",
-                getDrawable(android.R.drawable.sym_def_app_icon));
         FrameLayout.LayoutParams l2 = new FrameLayout.LayoutParams(
-                dp(cfg.compactW), h2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        l2.topMargin = dp(cfg.topDp) + h1 + dp(18);
+                Math.max(dp(cfg.compactW), notch + dp(68)), h2,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        l2.topMargin = dp(8) + h1 + dp(14);
         vista.addView(chica, l2);
     }
 
@@ -498,6 +575,47 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 enviarPrueba();
+            }
+        });
+    }
+
+    /** Dos botones de prueba en una fila. */
+    private void filaPrueba(LinearLayout col, String a, final int tipoA, String b,
+                            final int tipoB) {
+        LinearLayout fila = new LinearLayout(this);
+        fila.setOrientation(LinearLayout.HORIZONTAL);
+        col.addView(fila, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        boton(fila, a, TON, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                probarEvento(tipoA);
+            }
+        });
+        boton(fila, b, TON, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                probarEvento(tipoB);
+            }
+        });
+        for (int i = 0; i < fila.getChildCount(); i++) {
+            LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams)
+                    fila.getChildAt(i).getLayoutParams();
+            lp.width = 0;
+            lp.weight = 1f;
+            if (i > 0) lp.setMarginStart(dp(8));
+            fila.getChildAt(i).setLayoutParams(lp);
+        }
+    }
+
+    private void probarEvento(final int tipo) {
+        guardar(new Runnable() {
+            @Override
+            public void run() {
+                Intent i = new Intent(Eventos.ACCION_PRUEBA);
+                i.setPackage("com.android.systemui");
+                i.putExtra("tipo", tipo);
+                sendBroadcast(i);
             }
         });
     }

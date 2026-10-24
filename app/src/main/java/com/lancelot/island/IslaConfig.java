@@ -1,13 +1,16 @@
 package com.lancelot.island;
 
 import android.content.Context;
+import android.database.ContentObserver;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 
 import java.util.Locale;
 
 /**
- * Ajustes de la isla. Se guardan como un texto en Settings.Secure, asi SystemUI
- * los lee directamente sin necesitar ningun proceso ni servicio extra.
+ * Ajustes de la isla. Se guardan como un texto en Settings.Secure; SystemUI los lee
+ * una vez y los mantiene en cache, y solo vuelve a leerlos cuando cambian (ContentObserver).
  */
 final class IslaConfig {
 
@@ -16,9 +19,10 @@ final class IslaConfig {
     boolean enabled = true;
     int widthDp = 320;
     int heightDp = 64;
-    int topDp = 6;
+    /** Ajuste vertical extra de la isla expandida, en dp. */
+    int topDp = 2;
     int radiusDp = 32;
-    int durationMs = 4500;
+    int durationMs = 4000;
     int bgColor = 0xFF000000;
     int titleColor = 0xFFFFFFFF;
     int bodyColor = 0xFFCCCCCC;
@@ -27,8 +31,50 @@ final class IslaConfig {
     String blocked = "";
     /** 0 = Hyper (negra solida), 1 = Cristal (translucida con brillo) */
     int style = 0;
-    /** ancho de la capsula compacta, en dp */
-    int compactW = 140;
+    /** Ancho minimo de la capsula compacta, en dp. */
+    int compactW = 110;
+    /** 0 = la expandida baja bajo la barra de estado, 1 = se superpone a la barra. */
+    int expandedPos = 0;
+
+    // Que eventos muestra la isla
+    boolean fNotif = true;
+    boolean fCarga = true;
+    boolean fLinterna = true;
+    boolean fMusica = true;
+    boolean fTimbre = true;
+    boolean fAuric = true;
+    boolean fBateria = true;
+
+    private static volatile IslaConfig cache;
+    private static boolean observando;
+
+    /** Version con cache para SystemUI: lee una vez y se actualiza solo al cambiar los ajustes. */
+    static IslaConfig get(final Context c) {
+        IslaConfig x = cache;
+        if (x == null) {
+            x = load(c);
+            cache = x;
+            observar(c);
+        }
+        return x;
+    }
+
+    private static synchronized void observar(final Context c) {
+        if (observando) return;
+        observando = true;
+        try {
+            c.getContentResolver().registerContentObserver(
+                    Settings.Secure.getUriFor(KEY), false,
+                    new ContentObserver(new Handler(Looper.getMainLooper())) {
+                        @Override
+                        public void onChange(boolean selfChange) {
+                            cache = load(c);
+                        }
+                    });
+        } catch (Throwable t) {
+            observando = false;
+        }
+    }
 
     static IslaConfig load(Context c) {
         IslaConfig cfg = new IslaConfig();
@@ -39,6 +85,27 @@ final class IslaConfig {
             // se queda con los valores por defecto
         }
         return cfg;
+    }
+
+    boolean permite(int tipo) {
+        switch (tipo) {
+            case Evento.NOTIF:
+                return fNotif;
+            case Evento.CARGA:
+                return fCarga;
+            case Evento.LINTERNA:
+                return fLinterna;
+            case Evento.MUSICA:
+                return fMusica;
+            case Evento.TIMBRE:
+                return fTimbre;
+            case Evento.AURIC:
+                return fAuric;
+            case Evento.BATERIA:
+                return fBateria;
+            default:
+                return true;
+        }
     }
 
     void parse(String s) {
@@ -88,8 +155,32 @@ final class IslaConfig {
                     case "st":
                         style = clamp(Integer.parseInt(v), 0, 1);
                         break;
-                    case "cw":
+                    case "cm":
                         compactW = clamp(Integer.parseInt(v), 90, 200);
+                        break;
+                    case "ep":
+                        expandedPos = clamp(Integer.parseInt(v), 0, 1);
+                        break;
+                    case "xn":
+                        fNotif = "1".equals(v);
+                        break;
+                    case "xc":
+                        fCarga = "1".equals(v);
+                        break;
+                    case "xl":
+                        fLinterna = "1".equals(v);
+                        break;
+                    case "xm":
+                        fMusica = "1".equals(v);
+                        break;
+                    case "xt":
+                        fTimbre = "1".equals(v);
+                        break;
+                    case "xb":
+                        fAuric = "1".equals(v);
+                        break;
+                    case "xa":
+                        fBateria = "1".equals(v);
                         break;
                     default:
                         break;
@@ -101,7 +192,7 @@ final class IslaConfig {
     }
 
     String serialize() {
-        return "en=" + (enabled ? 1 : 0)
+        return "en=" + b(enabled)
                 + ";w=" + widthDp
                 + ";h=" + heightDp
                 + ";t=" + topDp
@@ -110,10 +201,18 @@ final class IslaConfig {
                 + ";bg=" + hex(bgColor)
                 + ";tc=" + hex(titleColor)
                 + ";bc=" + hex(bodyColor)
-                + ";bo=" + (bounce ? 1 : 0)
-                + ";ic=" + (showIcon ? 1 : 0)
+                + ";bo=" + b(bounce)
+                + ";ic=" + b(showIcon)
                 + ";st=" + style
-                + ";cw=" + compactW
+                + ";cm=" + compactW
+                + ";ep=" + expandedPos
+                + ";xn=" + b(fNotif)
+                + ";xc=" + b(fCarga)
+                + ";xl=" + b(fLinterna)
+                + ";xm=" + b(fMusica)
+                + ";xt=" + b(fTimbre)
+                + ";xb=" + b(fAuric)
+                + ";xa=" + b(fBateria)
                 + ";bl=" + limpiar(blocked);
     }
 
@@ -154,6 +253,10 @@ final class IslaConfig {
             }
         }
         return sb.toString();
+    }
+
+    private static String b(boolean v) {
+        return v ? "1" : "0";
     }
 
     private static String hex(int c) {

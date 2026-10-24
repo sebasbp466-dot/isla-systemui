@@ -1,5 +1,6 @@
 package com.lancelot.island;
 
+import android.app.Application;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.content.Context;
@@ -7,6 +8,7 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
+import android.media.session.MediaSession;
 import android.os.Bundle;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
@@ -20,8 +22,8 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * Se engancha al NotificationListener que ya existe dentro de SystemUI.
- * No crea procesos ni servicios: solo dibuja una ventana mientras la isla esta visible.
+ * Se engancha dentro de SystemUI: al listener de notificaciones que ya existe (sin servicios
+ * ni procesos extra) y al arranque de la aplicacion para registrar los demas eventos.
  */
 public class MainHook implements IXposedHookLoadPackage {
 
@@ -36,11 +38,11 @@ public class MainHook implements IXposedHookLoadPackage {
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
         if (!SYSTEMUI.equals(lpparam.packageName)) return;
         try {
-            XC_MethodHook cb = new XC_MethodHook() {
+            // Notificaciones: publicadas y retiradas
+            XC_MethodHook publicada = new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
-                        XposedBridge.log(TAG + "hook disparado, args=" + param.args.length);
                         if (param.args.length > 0
                                 && param.args[0] instanceof StatusBarNotification) {
                             Context ctx = contexto(param.thisObject);
@@ -48,7 +50,24 @@ public class MainHook implements IXposedHookLoadPackage {
                                 XposedBridge.log(TAG + "sin contexto, no se puede mostrar");
                                 return;
                             }
+                            Eventos.iniciar(ctx);
                             manejar(ctx, (StatusBarNotification) param.args[0]);
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log(t);
+                    }
+                }
+            };
+            XC_MethodHook retirada = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.args.length > 0
+                                && param.args[0] instanceof StatusBarNotification) {
+                            StatusBarNotification sbn = (StatusBarNotification) param.args[0];
+                            if (Eventos.tokenDe(sbn.getNotification()) != null) {
+                                Eventos.mediaRemovida(sbn.getPackageName());
+                            }
                         }
                     } catch (Throwable t) {
                         XposedBridge.log(t);
@@ -59,16 +78,34 @@ public class MainHook implements IXposedHookLoadPackage {
             int hooks = 0;
             Class<?> c = XposedHelpers.findClassIfExists(LISTENER, lpparam.classLoader);
             if (c != null) {
-                hooks = XposedBridge.hookAllMethods(c, "onNotificationPosted", cb).size();
+                hooks = XposedBridge.hookAllMethods(c, "onNotificationPosted", publicada).size();
+                XposedBridge.hookAllMethods(c, "onNotificationRemoved", retirada);
             }
             if (hooks == 0) {
                 // Plan B: si en tu ROM la clase se llama distinto, engancha la clase base
                 hooks = XposedBridge.hookAllMethods(
-                        NotificationListenerService.class, "onNotificationPosted", cb).size();
+                        NotificationListenerService.class, "onNotificationPosted", publicada)
+                        .size();
+                XposedBridge.hookAllMethods(
+                        NotificationListenerService.class, "onNotificationRemoved", retirada);
                 XposedBridge.log(TAG + "usando plan B (clase base), hooks=" + hooks);
             } else {
                 XposedBridge.log(TAG + "hooks=" + hooks);
             }
+
+            // Eventos del sistema (carga, linterna, timbre...): se registran al crearse la app
+            XposedBridge.hookAllMethods(Application.class, "onCreate", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.thisObject instanceof Context) {
+                        Eventos.iniciar((Context) param.thisObject);
+                    }
+                }
+            });
+            Object app = XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("android.app.ActivityThread", null),
+                    "currentApplication");
+            if (app instanceof Context) Eventos.iniciar((Context) app);
         } catch (Throwable t) {
             XposedBridge.log(t);
         }
@@ -77,46 +114,34 @@ public class MainHook implements IXposedHookLoadPackage {
     private void manejar(Context ctx, StatusBarNotification sbn) {
         Notification n = sbn.getNotification();
         if (n == null) return;
-        int ignorar = Notification.FLAG_ONGOING_EVENT
-                | Notification.FLAG_GROUP_SUMMARY
-                | Notification.FLAG_FOREGROUND_SERVICE;
-        XposedBridge.log(TAG + "recibida pkg=" + sbn.getPackageName() + " flags=" + n.flags);
-        if ((n.flags & ignorar) != 0) {
-            XposedBridge.log(TAG + "ignorada: en curso/grupo/servicio");
-            return;
-        }
-        if (SYSTEMUI.equals(sbn.getPackageName())) {
-            XposedBridge.log(TAG + "ignorada: es de SystemUI");
+        if (SYSTEMUI.equals(sbn.getPackageName())) return;
+        IslaConfig cfg = IslaConfig.get(ctx);
+        if (!cfg.enabled) return;
+
+        // Reproductor de musica: no es una notificacion, es una sesion de medios
+        MediaSession.Token token = Eventos.tokenDe(n);
+        if (token != null) {
+            if (cfg.fMusica) Eventos.media(sbn, token);
             return;
         }
 
-        IslaConfig cfg = IslaConfig.load(ctx);
-        if (!cfg.enabled) {
-            XposedBridge.log(TAG + "ignorada: isla desactivada en los ajustes");
-            return;
-        }
-        if (cfg.isBlocked(sbn.getPackageName())) {
-            XposedBridge.log(TAG + "ignorada: app bloqueada " + sbn.getPackageName());
-            return;
-        }
+        int ignorar = Notification.FLAG_ONGOING_EVENT
+                | Notification.FLAG_GROUP_SUMMARY
+                | Notification.FLAG_FOREGROUND_SERVICE;
+        if ((n.flags & ignorar) != 0) return;
+        if (!cfg.fNotif || cfg.isBlocked(sbn.getPackageName())) return;
 
         Bundle e = n.extras;
         CharSequence titulo = e != null ? e.getCharSequence(Notification.EXTRA_TITLE) : null;
         CharSequence texto = e != null ? e.getCharSequence(Notification.EXTRA_TEXT) : null;
-        if (isEmpty(titulo) && isEmpty(texto)) {
-            XposedBridge.log(TAG + "ignorada: sin titulo ni texto");
-            return;
-        }
+        if (isEmpty(titulo) && isEmpty(texto)) return;
         if (isEmpty(titulo)) titulo = etiquetaApp(ctx, sbn.getPackageName());
 
         String key = sbn.getKey();
         int hash = (String.valueOf(titulo) + "|" + texto).hashCode();
         synchronized (vistos) {
             Integer prev = vistos.get(key);
-            if (prev != null && prev == hash) {
-                XposedBridge.log(TAG + "ignorada: repetida");
-                return;
-            }
+            if (prev != null && prev == hash) return;
             if (vistos.size() > 100) vistos.clear();
             vistos.put(key, hash);
         }
@@ -140,9 +165,13 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.log(t);
         }
 
+        Evento ev = new Evento(Evento.NOTIF);
+        ev.titulo = titulo;
+        ev.texto = texto != null ? texto : "";
+        ev.icono = icono;
         PendingIntent accion = n.contentIntent;
-        XposedBridge.log(TAG + "mostrando isla: " + titulo);
-        IslandController.get(ctx).show(cfg, titulo, texto, icono, accion);
+        ev.accion = accion;
+        IslandController.get(ctx).show(ev);
     }
 
     /**

@@ -73,8 +73,8 @@ su -c "pkill -f com.android.systemui" || true
 sleep 8
 
 paso "6/6 Comprobando el hook"
-su -c "grep -h '\[IslaSystemUI\] hooks=' /data/adb/lspd/log/modules_*.log | tail -n 1" || true
-echo "(Si esa linea no es reciente, activa el modulo en LSPosed y vuelve a correr el script)"
+su -c "grep -h -E '\[IslaSystemUI\] (hooks=|eventos iniciados|ventana anadida)' /data/adb/lspd/log/modules_*.log | tail -n 4" || true
+echo "(Debe salir 'hooks=1' y 'eventos iniciados'. Si no es reciente, activa el modulo en LSPosed y reinicia SystemUI)"
 su -c "am start -n $PKG/.MainActivity" >/dev/null 2>&1 || true
 echo ""
 echo "Listo. Se abrio la app de ajustes."
