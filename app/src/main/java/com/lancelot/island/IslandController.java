@@ -97,6 +97,7 @@ final class IslandController {
                     if (!shown) {
                         wm.addView(root, params());
                         shown = true;
+                        XposedBridge.log("[IslaSystemUI] ventana anadida");
                         pill.setScaleX(0.28f);
                         pill.setScaleY(0.5f);
                         pill.setAlpha(0f);

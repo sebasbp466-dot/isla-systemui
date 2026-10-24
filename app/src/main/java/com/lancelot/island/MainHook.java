@@ -40,6 +40,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     try {
+                        XposedBridge.log(TAG + "hook disparado, args=" + param.args.length);
                         if (param.args.length > 0
                                 && param.args[0] instanceof StatusBarNotification
                                 && param.thisObject instanceof Context) {
@@ -75,20 +76,33 @@ public class MainHook implements IXposedHookLoadPackage {
         int ignorar = Notification.FLAG_ONGOING_EVENT
                 | Notification.FLAG_GROUP_SUMMARY
                 | Notification.FLAG_FOREGROUND_SERVICE;
-        if ((n.flags & ignorar) != 0) return;
-        if (SYSTEMUI.equals(sbn.getPackageName())) return;
+        XposedBridge.log(TAG + "recibida pkg=" + sbn.getPackageName() + " flags=" + n.flags);
+        if ((n.flags & ignorar) != 0) {
+            XposedBridge.log(TAG + "ignorada: en curso/grupo/servicio");
+            return;
+        }
+        if (SYSTEMUI.equals(sbn.getPackageName())) {
+            XposedBridge.log(TAG + "ignorada: es de SystemUI");
+            return;
+        }
 
         Bundle e = n.extras;
         CharSequence titulo = e != null ? e.getCharSequence(Notification.EXTRA_TITLE) : null;
         CharSequence texto = e != null ? e.getCharSequence(Notification.EXTRA_TEXT) : null;
-        if (isEmpty(titulo) && isEmpty(texto)) return;
+        if (isEmpty(titulo) && isEmpty(texto)) {
+            XposedBridge.log(TAG + "ignorada: sin titulo ni texto");
+            return;
+        }
         if (isEmpty(titulo)) titulo = etiquetaApp(ctx, sbn.getPackageName());
 
         String key = sbn.getKey();
         int hash = (String.valueOf(titulo) + "|" + texto).hashCode();
         synchronized (vistos) {
             Integer prev = vistos.get(key);
-            if (prev != null && prev == hash) return;
+            if (prev != null && prev == hash) {
+                XposedBridge.log(TAG + "ignorada: repetida");
+                return;
+            }
             if (vistos.size() > 100) vistos.clear();
             vistos.put(key, hash);
         }
@@ -113,6 +127,7 @@ public class MainHook implements IXposedHookLoadPackage {
         }
 
         PendingIntent accion = n.contentIntent;
+        XposedBridge.log(TAG + "mostrando isla: " + titulo);
         IslandController.get(ctx).show(titulo, texto, icono, accion);
     }
 
