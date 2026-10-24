@@ -25,6 +25,10 @@ final class IslaConfig {
     boolean bounce = true;
     boolean showIcon = true;
     String blocked = "";
+    /** 0 = Hyper (negra solida), 1 = Cristal (translucida con brillo) */
+    int style = 0;
+    /** ancho de la capsula compacta, en dp */
+    int compactW = 140;
 
     static IslaConfig load(Context c) {
         IslaConfig cfg = new IslaConfig();
@@ -81,6 +85,12 @@ final class IslaConfig {
                     case "bl":
                         blocked = limpiar(v);
                         break;
+                    case "st":
+                        style = clamp(Integer.parseInt(v), 0, 1);
+                        break;
+                    case "cw":
+                        compactW = clamp(Integer.parseInt(v), 90, 200);
+                        break;
                     default:
                         break;
                 }
@@ -102,6 +112,8 @@ final class IslaConfig {
                 + ";bc=" + hex(bodyColor)
                 + ";bo=" + (bounce ? 1 : 0)
                 + ";ic=" + (showIcon ? 1 : 0)
+                + ";st=" + style
+                + ";cw=" + compactW
                 + ";bl=" + limpiar(blocked);
     }
 
