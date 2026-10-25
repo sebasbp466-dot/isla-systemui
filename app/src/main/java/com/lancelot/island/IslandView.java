@@ -8,11 +8,14 @@ import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
+import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewOutlineProvider;
+import android.widget.Chronometer;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -21,7 +24,7 @@ import android.widget.TextView;
 /**
  * La capsula de la isla. La usan SystemUI (isla real) y la app (vista previa).
  * Estado compacto: icono a un lado, indicador al otro y, si hay notch, un hueco en medio.
- * Estado expandido: icono grande, textos, indicador y, segun el evento, barra y controles.
+ * Estado expandido: icono grande, textos, indicador y, segun el evento, barra, controles o botones.
  */
 final class IslandView extends LinearLayout {
 
@@ -30,17 +33,19 @@ final class IslandView extends LinearLayout {
         int h = cfg.heightDp;
         if (e != null) {
             if (e.tipo == Evento.MUSICA) {
-                h += 54;
-            } else if (e.tipo == Evento.CARGA) {
+                h += 64;
+            } else if (e.tipo == Evento.CARGA || e.tipo == Evento.PROGRESO
+                    || e.tipo == Evento.VOLUMEN) {
                 h += 14;
             }
+            if (e.botonTxt != null && e.botonTxt.length > 0) h += 46;
         }
         return h;
     }
 
-    /** Alto extra maximo (musica), para dimensionar la ventana. */
+    /** Alto extra maximo, para dimensionar la ventana. */
     static int alturaMaxDp(IslaConfig cfg) {
-        return cfg.heightDp + 54;
+        return cfg.heightDp + 64;
     }
 
     private final IslaConfig cfg;
@@ -59,19 +64,32 @@ final class IslandView extends LinearLayout {
     private final FrameLayout derecha;
     private final EqualizerView ecual;
     private final TextView valor;
+    private final Chronometer crono;
+    private final AnilloView anillo;
     private final LinearLayout inferior;
+    private final FrameLayout barraFrame;
     private final BarraView barra;
     private final LinearLayout controles;
     private final GlyphView bAnterior;
     private final GlyphView bPlay;
     private final GlyphView bSiguiente;
+    private final LinearLayout botones;
 
     private final GradientDrawable base;
     private final GradientDrawable shine;
 
     private ValueAnimator contador;
+    private ValueAnimator destello;
     private Evento ev;
     private boolean expandido;
+    private String ultTitulo;
+    private String ultTexto;
+    private Object botonesDe;
+
+    /** Se avisa cuando el usuario toca un control interno (reinicia el temporizador). */
+    private Runnable alInteraccion;
+    /** Se avisa despues de pulsar un boton (el controlador cierra la isla). */
+    private Runnable alBoton;
 
     IslandView(Context ctx, IslaConfig cfg, int cutoutPx) {
         super(ctx);
@@ -136,12 +154,14 @@ final class IslandView extends LinearLayout {
         titulo.setTypeface(Typeface.DEFAULT_BOLD);
         titulo.setSingleLine(true);
         titulo.setEllipsize(TextUtils.TruncateAt.END);
+        titulo.setMarqueeRepeatLimit(1);
         textos.addView(titulo);
 
         cuerpo = new TextView(ctx);
         cuerpo.setTextColor(cfg.bodyColor);
         cuerpo.setSingleLine(true);
         cuerpo.setEllipsize(TextUtils.TruncateAt.END);
+        cuerpo.setMarqueeRepeatLimit(1);
         cuerpo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         textos.addView(cuerpo);
 
@@ -154,22 +174,32 @@ final class IslandView extends LinearLayout {
         derecha.addView(valor, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER));
+        crono = new Chronometer(ctx);
+        crono.setTypeface(Typeface.DEFAULT_BOLD);
+        crono.setSingleLine(true);
+        derecha.addView(crono, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER));
+        anillo = new AnilloView(ctx);
+        derecha.addView(anillo, new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER));
         fila.addView(derecha, new LinearLayout.LayoutParams(
                 LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
         derecha.setVisibility(GONE);
 
-        // ---- parte inferior (musica y carga)
+        // ---- parte inferior (musica, carga, progreso, botones)
         inferior = new LinearLayout(ctx);
         inferior.setOrientation(VERTICAL);
         inferior.setVisibility(GONE);
         addView(inferior, new LinearLayout.LayoutParams(
                 LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
 
+        // La barra es fina, pero su zona tactil (para buscar en la cancion) es mas alta
+        barraFrame = new FrameLayout(ctx);
         barra = new BarraView(ctx);
-        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
-                LayoutParams.MATCH_PARENT, dp(4));
-        blp.topMargin = dp(10);
-        inferior.addView(barra, blp);
+        barraFrame.addView(barra, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, dp(4), Gravity.CENTER_VERTICAL));
+        inferior.addView(barraFrame, new LinearLayout.LayoutParams(
+                LayoutParams.MATCH_PARENT, dp(4)));
 
         controles = new LinearLayout(ctx);
         controles.setOrientation(HORIZONTAL);
@@ -183,7 +213,93 @@ final class IslandView extends LinearLayout {
         controles.addView(bPlay, botonLp());
         controles.addView(bSiguiente, botonLp());
 
+        botones = new LinearLayout(ctx);
+        botones.setOrientation(HORIZONTAL);
+        botones.setGravity(Gravity.CENTER);
+        botones.setVisibility(GONE);
+        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(
+                LayoutParams.MATCH_PARENT, dp(36));
+        bl.topMargin = dp(10);
+        inferior.addView(botones, bl);
+
+        // Controles de musica: cada pulsacion reinicia el temporizador de la isla
+        bAnterior.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (ev != null) ev.anterior();
+                interaccion();
+            }
+        });
+        bPlay.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (ev != null) ev.alternar();
+                interaccion();
+            }
+        });
+        bSiguiente.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (ev != null) ev.siguiente();
+                interaccion();
+            }
+        });
+        barraFrame.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View v, MotionEvent m) {
+                return buscar(v, m);
+            }
+        });
+
         configurar(null, true, false);
+    }
+
+    void setAlInteraccion(Runnable r) {
+        alInteraccion = r;
+    }
+
+    void setAlBoton(Runnable r) {
+        alBoton = r;
+    }
+
+    private void interaccion() {
+        if (alInteraccion != null) alInteraccion.run();
+    }
+
+    /** Arrastrar sobre la barra de la musica para saltar a otro punto. */
+    private boolean buscar(View v, MotionEvent m) {
+        Evento e = ev;
+        if (e == null || e.tipo != Evento.MUSICA || e.duracion <= 0 || v.getWidth() <= 0) {
+            return false;
+        }
+        float f = Math.max(0f, Math.min(1f, m.getX() / v.getWidth()));
+        switch (m.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
+                interaccion();
+                barra.setProgreso(f);
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                interaccion();
+                barra.setProgreso(f);
+                return true;
+            case MotionEvent.ACTION_UP:
+                long destino = (long) (f * e.duracion);
+                e.buscar(destino);
+                e.posicion = destino;
+                e.marca = SystemClock.elapsedRealtime();
+                if (e.reproduciendo) {
+                    barra.reproducir(f, e.duracion - destino);
+                } else {
+                    barra.setProgreso(f);
+                }
+                interaccion();
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private GlyphView boton() {
@@ -210,6 +326,52 @@ final class IslandView extends LinearLayout {
         return expandido;
     }
 
+    /** Aro de luz del color del evento que aparece y se desvanece. */
+    void destello(int color) {
+        if (!cfg.glow) return;
+        if (destello != null) destello.cancel();
+        final int c = (color & 0x00FFFFFF);
+        final int ancho = Math.max(2, dp(2));
+        destello = ValueAnimator.ofFloat(0f, 1f);
+        destello.setDuration(cfg.ms(1100));
+        destello.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator a) {
+                float f = (Float) a.getAnimatedValue();
+                int al = Math.round(210f * (float) Math.sin(Math.PI * f));
+                base.setStroke(ancho, c | (al << 24));
+            }
+        });
+        destello.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                restaurarBorde();
+            }
+
+            @Override
+            public void onAnimationCancel(android.animation.Animator animation) {
+                restaurarBorde();
+            }
+        });
+        destello.start();
+    }
+
+    private void restaurarBorde() {
+        if (cfg.style == 1) {
+            base.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
+        } else {
+            base.setStroke(0, 0);
+        }
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        if (destello != null) destello.cancel();
+        if (contador != null) contador.cancel();
+        crono.stop();
+        super.onDetachedFromWindow();
+    }
+
     /**
      * Muestra el evento en el estado pedido.
      * animar: lanza las animaciones de entrada (icono, contador, barra).
@@ -221,6 +383,7 @@ final class IslandView extends LinearLayout {
             contador.cancel();
             contador = null;
         }
+        crono.stop();
         final boolean dividido = !ex && cutoutPx > 0;
 
         // ---- espacios
@@ -253,7 +416,13 @@ final class IslandView extends LinearLayout {
             glifo.setVisibility(VISIBLE);
             int tipoGlifo = e.glifo != 0 ? e.glifo : GlyphView.NOTA;
             glifo.set(tipoGlifo, e.nivel < 0 ? 0f : e.nivel / 100f, e.activo, e.sub, e.color);
-            if (ex && animar) glifo.entrada();
+            // El glifo se anima al expandir; si ya esta activo tambien en compacto (llamada, descarga)
+            if (animar && ex) {
+                glifo.entrada();
+            } else if (e.activo && (e.tipo == Evento.LLAMADA || e.tipo == Evento.PROGRESO
+                    || e.tipo == Evento.PRIVACIDAD)) {
+                glifo.entrada();
+            }
         } else {
             glifo.setVisibility(GONE);
             icono.setVisibility(VISIBLE);
@@ -271,15 +440,39 @@ final class IslandView extends LinearLayout {
         LinearLayout.LayoutParams tlp = (LinearLayout.LayoutParams) textos.getLayoutParams();
         tlp.setMarginStart(conIcono ? (ex ? dp(12) : dp(8)) : dp(4));
         textos.setLayoutParams(tlp);
+
+        String tit = String.valueOf(e.titulo);
+        String txt = String.valueOf(e.texto);
+        boolean cambioTexto = ultTitulo != null && (!tit.equals(ultTitulo) || !txt.equals(ultTexto));
+        ultTitulo = tit;
+        ultTexto = txt;
         titulo.setText(e.titulo);
         titulo.setTextSize(TypedValue.COMPLEX_UNIT_SP, ex ? 14 : 12);
+        // Texto largo: en expandido se desplaza una vez para poder leerlo entero
+        titulo.setEllipsize(ex ? TextUtils.TruncateAt.MARQUEE : TextUtils.TruncateAt.END);
+        titulo.setSelected(ex);
         cuerpo.setText(e.texto);
+        cuerpo.setEllipsize(ex ? TextUtils.TruncateAt.MARQUEE : TextUtils.TruncateAt.END);
+        cuerpo.setSelected(ex);
         cuerpo.setVisibility(ex && !TextUtils.isEmpty(e.texto) ? VISIBLE : GONE);
+        if (cambioTexto && ex && !animar) {
+            // Fundido corto cuando el texto cambia sin que cambie el evento
+            textos.setAlpha(0.15f);
+            textos.animate().alpha(1f).setDuration(cfg.ms(200)).start();
+        } else {
+            textos.animate().cancel();
+            textos.setAlpha(1f);
+        }
 
         // ---- indicador de la derecha
+        ecual.setAnimando(false);
+        ecual.setVisibility(GONE);
+        valor.setVisibility(GONE);
+        crono.setVisibility(GONE);
+        anillo.setVisibility(GONE);
+        derecha.setVisibility(GONE);
         if (e.tipo == Evento.MUSICA) {
             derecha.setVisibility(VISIBLE);
-            valor.setVisibility(GONE);
             ecual.setVisibility(VISIBLE);
             ecual.setColor(e.color);
             ecual.setAnimando(e.reproduciendo);
@@ -287,17 +480,34 @@ final class IslandView extends LinearLayout {
             elp.width = ex ? dp(24) : dp(18);
             elp.height = ex ? dp(20) : dp(14);
             ecual.setLayoutParams(elp);
-        } else if ((e.tipo == Evento.CARGA || e.tipo == Evento.BATERIA) && e.nivel >= 0) {
+        } else if (e.tipo == Evento.LLAMADA && e.sub == 2 && e.base > 0) {
             derecha.setVisibility(VISIBLE);
-            ecual.setAnimando(false);
-            ecual.setVisibility(GONE);
+            crono.setVisibility(VISIBLE);
+            crono.setTextColor(e.color);
+            crono.setTextSize(TypedValue.COMPLEX_UNIT_SP, ex ? 16 : 11);
+            crono.setBase(e.base);
+            crono.start();
+        } else if (e.tipo == Evento.PROGRESO && e.nivel >= 0) {
+            derecha.setVisibility(VISIBLE);
+            if (ex) {
+                valor.setVisibility(VISIBLE);
+                valor.setTextColor(e.color);
+                valor.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+                valor.setText(e.nivel + "%");
+            } else {
+                anillo.setVisibility(VISIBLE);
+                anillo.set(e.color, e.nivel / 100f);
+            }
+        } else if ((e.tipo == Evento.CARGA || e.tipo == Evento.BATERIA
+                || e.tipo == Evento.VOLUMEN) && e.nivel >= 0) {
+            derecha.setVisibility(VISIBLE);
             valor.setVisibility(VISIBLE);
             valor.setTextColor(e.color);
             valor.setTextSize(TypedValue.COMPLEX_UNIT_SP, ex ? 20 : 11);
-            if (ex && animar && e.nivel > 0) {
+            if (ex && animar && e.nivel > 0 && e.tipo != Evento.VOLUMEN) {
                 final int destino = e.nivel;
                 contador = ValueAnimator.ofInt(0, destino);
-                contador.setDuration(750);
+                contador.setDuration(cfg.ms(750));
                 contador.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
                     @Override
                     public void onAnimationUpdate(ValueAnimator a) {
@@ -309,14 +519,38 @@ final class IslandView extends LinearLayout {
             } else {
                 valor.setText(e.nivel + "%");
             }
-        } else {
-            ecual.setAnimando(false);
-            derecha.setVisibility(GONE);
+        } else if (e.tipo == Evento.NOTIF && !ex && e.minimizada) {
+            // Notificacion minimizada: un punto de color avisa de que hay algo que leer
+            derecha.setVisibility(VISIBLE);
+            valor.setVisibility(VISIBLE);
+            valor.setTextColor(e.color);
+            valor.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            valor.setText("●");
         }
 
         // ---- parte inferior
-        if (ex && e.tipo == Evento.MUSICA) {
-            inferior.setVisibility(VISIBLE);
+        boolean conBotones = ex && e.botonTxt != null && e.botonTxt.length > 0;
+        boolean conBarra = ex && (e.tipo == Evento.MUSICA || e.tipo == Evento.CARGA
+                || e.tipo == Evento.PROGRESO || e.tipo == Evento.VOLUMEN);
+        if (!conBarra && !conBotones) {
+            inferior.setVisibility(GONE);
+            return;
+        }
+        inferior.setVisibility(VISIBLE);
+
+        if (conBarra) {
+            barraFrame.setVisibility(VISIBLE);
+            boolean musica = e.tipo == Evento.MUSICA;
+            LinearLayout.LayoutParams flp = (LinearLayout.LayoutParams) barraFrame.getLayoutParams();
+            flp.height = musica ? dp(18) : dp(4);
+            flp.topMargin = musica ? dp(6) : dp(10);
+            barraFrame.setLayoutParams(flp);
+            ((FrameLayout.LayoutParams) barra.getLayoutParams()).height = dp(4);
+        } else {
+            barraFrame.setVisibility(GONE);
+        }
+
+        if (e.tipo == Evento.MUSICA) {
             controles.setVisibility(VISIBLE);
             barra.setColores(0xFFFFFFFF, 0x33FFFFFF);
             if (e.duracion > 0) {
@@ -333,36 +567,70 @@ final class IslandView extends LinearLayout {
             bPlay.set(e.reproduciendo ? GlyphView.PAUSA : GlyphView.PLAY, 0f, false, 0,
                     0xFFFFFFFF);
             bSiguiente.set(GlyphView.SIGUIENTE, 0f, false, 0, 0xFFFFFFFF);
-            bAnterior.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (ev != null) ev.anterior();
-                }
-            });
-            bPlay.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (ev != null) ev.alternar();
-                }
-            });
-            bSiguiente.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (ev != null) ev.siguiente();
-                }
-            });
-        } else if (ex && e.tipo == Evento.CARGA) {
-            inferior.setVisibility(VISIBLE);
-            controles.setVisibility(GONE);
-            barra.setColores(e.color, 0x33FFFFFF);
-            if (animar) {
-                barra.setProgreso(0f);
-                barra.animarA(Math.max(0, e.nivel) / 100f, 750);
-            } else {
-                barra.setProgreso(Math.max(0, e.nivel) / 100f);
-            }
         } else {
-            inferior.setVisibility(GONE);
+            controles.setVisibility(GONE);
+            if (conBarra) {
+                barra.setColores(e.color, 0x33FFFFFF);
+                float f = Math.max(0, e.nivel) / 100f;
+                if (animar) {
+                    barra.setProgreso(0f);
+                    barra.animarA(f, cfg.ms(750));
+                } else {
+                    barra.setProgreso(f);
+                }
+            }
+        }
+
+        if (conBotones) {
+            construirBotones(e);
+        } else {
+            botones.setVisibility(GONE);
+            botonesDe = null;
+        }
+    }
+
+    private void construirBotones(Evento e) {
+        botones.setVisibility(VISIBLE);
+        if (botonesDe == e.botonTxt) return;
+        botonesDe = e.botonTxt;
+        botones.removeAllViews();
+        for (int i = 0; i < e.botonTxt.length; i++) {
+            final int idx = i;
+            TextView t = new TextView(getContext());
+            t.setText(e.botonTxt[i]);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            t.setTypeface(Typeface.DEFAULT_BOLD);
+            t.setTextColor(Color.WHITE);
+            t.setGravity(Gravity.CENTER);
+            t.setSingleLine(true);
+            t.setEllipsize(TextUtils.TruncateAt.END);
+            t.setPadding(dp(8), 0, dp(8), 0);
+            GradientDrawable fondo = new GradientDrawable();
+            int col = e.botonColor != null && i < e.botonColor.length ? e.botonColor[i]
+                    : 0x33FFFFFF;
+            fondo.setColor(col);
+            fondo.setCornerRadius(dp(18));
+            t.setBackground(fondo);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
+                    LayoutParams.MATCH_PARENT, 1f);
+            lp.leftMargin = dp(4);
+            lp.rightMargin = dp(4);
+            botones.addView(t, lp);
+            t.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    Evento actual = ev;
+                    if (actual != null && actual.botonRun != null && idx < actual.botonRun.length
+                            && actual.botonRun[idx] != null) {
+                        try {
+                            actual.botonRun[idx].run();
+                        } catch (Throwable ignorado) {
+                            // un boton que falla no debe tumbar SystemUI
+                        }
+                    }
+                    if (alBoton != null) alBoton.run();
+                }
+            });
         }
     }
 

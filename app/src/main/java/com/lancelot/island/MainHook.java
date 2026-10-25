@@ -10,6 +10,7 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 import android.media.session.MediaSession;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 
@@ -33,6 +34,9 @@ public class MainHook implements IXposedHookLoadPackage {
 
     // key de notificacion -> hash del ultimo contenido (evita repetir actualizaciones iguales)
     private final HashMap<String, Integer> vistos = new HashMap<>();
+    // key de notificacion con progreso -> porcentaje con el que se mostro la ultima vez
+    private final HashMap<String, Integer> progresos = new HashMap<>();
+    private int ultimaLlamadaSub = -1;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -65,8 +69,19 @@ public class MainHook implements IXposedHookLoadPackage {
                         if (param.args.length > 0
                                 && param.args[0] instanceof StatusBarNotification) {
                             StatusBarNotification sbn = (StatusBarNotification) param.args[0];
-                            if (Eventos.tokenDe(sbn.getNotification()) != null) {
+                            Notification n = sbn.getNotification();
+                            if (Eventos.tokenDe(n) != null) {
                                 Eventos.mediaRemovida(sbn.getPackageName());
+                            }
+                            synchronized (progresos) {
+                                progresos.remove(sbn.getKey());
+                            }
+                            if (n != null && Notification.CATEGORY_CALL.equals(n.category)) {
+                                Context ctx = contexto(param.thisObject);
+                                if (ctx != null) {
+                                    ultimaLlamadaSub = -1;
+                                    IslandController.get(ctx).setLlamada(null, false);
+                                }
                             }
                         }
                     } catch (Throwable t) {
@@ -125,6 +140,22 @@ public class MainHook implements IXposedHookLoadPackage {
             return;
         }
 
+        // Llamadas: capsula fija con temporizador y botones
+        if (Notification.CATEGORY_CALL.equals(n.category)) {
+            if (cfg.fLlamada) llamada(ctx, sbn, n);
+            return;
+        }
+
+        // Descargas y demas progreso: aro en la capsula minimizada
+        Bundle ex = n.extras;
+        if (ex != null && cfg.fProgreso && !cfg.isBlocked(sbn.getPackageName())) {
+            int max = ex.getInt(Notification.EXTRA_PROGRESS_MAX, 0);
+            if (max > 0 && !ex.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)) {
+                progreso(ctx, sbn, n, ex.getInt(Notification.EXTRA_PROGRESS, 0), max);
+                return;
+            }
+        }
+
         int ignorar = Notification.FLAG_ONGOING_EVENT
                 | Notification.FLAG_GROUP_SUMMARY
                 | Notification.FLAG_FOREGROUND_SERVICE;
@@ -171,7 +202,133 @@ public class MainHook implements IXposedHookLoadPackage {
         ev.icono = icono;
         PendingIntent accion = n.contentIntent;
         ev.accion = accion;
+        ev.pkg = sbn.getPackageName();
+        ev.clave = key;
+        ev.color = acento(n.color);
+        // Primera accion nativa que no pida escribir (marcar leido, archivar...)
+        if (n.actions != null) {
+            for (Notification.Action a : n.actions) {
+                if (a == null || a.actionIntent == null || isEmpty(a.title)) continue;
+                if (a.getRemoteInputs() != null && a.getRemoteInputs().length > 0) continue;
+                ev.nativaTxt = a.title;
+                ev.nativaPi = a.actionIntent;
+                break;
+            }
+        }
         IslandController.get(ctx).show(ev);
+    }
+
+    /** Color de acento de la app, o blanco si es muy oscuro para verse sobre negro. */
+    private static int acento(int color) {
+        if (color == 0) return 0xFFFFFFFF;
+        int c = color | 0xFF000000;
+        float lum = (0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c))
+                / 255f;
+        return lum < 0.25f ? 0xFFFFFFFF : c;
+    }
+
+    private void progreso(Context ctx, StatusBarNotification sbn, Notification n, int prog,
+                          int max) {
+        Bundle e = n.extras;
+        CharSequence titulo = e != null ? e.getCharSequence(Notification.EXTRA_TITLE) : null;
+        CharSequence texto = e != null ? e.getCharSequence(Notification.EXTRA_TEXT) : null;
+        if (isEmpty(titulo)) titulo = etiquetaApp(ctx, sbn.getPackageName());
+        int pct = Math.max(0, Math.min(100, Math.round(prog * 100f / max)));
+
+        Evento ev = new Evento(Evento.PROGRESO);
+        ev.glifo = GlyphView.DESCARGA;
+        ev.activo = true;
+        ev.color = 0xFF0A84FF;
+        ev.clave = sbn.getKey();
+        ev.pkg = sbn.getPackageName();
+        ev.accion = n.contentIntent;
+        ev.nivel = pct;
+        ev.titulo = titulo;
+        ev.texto = pct + "%" + (isEmpty(texto) ? "" : " \u00B7 " + texto);
+
+        // Vuelve a aparecer solo si avanzo bastante; en medio solo se actualiza el aro
+        boolean nuevo;
+        synchronized (progresos) {
+            Integer ultimo = progresos.get(sbn.getKey());
+            nuevo = pct < 100 && (ultimo == null || pct - ultimo >= 25);
+            if (nuevo) {
+                if (progresos.size() > 50) progresos.clear();
+                progresos.put(sbn.getKey(), pct);
+            }
+        }
+        IslandController.get(ctx).progreso(ev, nuevo);
+    }
+
+    private void llamada(Context ctx, StatusBarNotification sbn, Notification n) {
+        Bundle e = n.extras;
+        CharSequence titulo = e != null ? e.getCharSequence(Notification.EXTRA_TITLE) : null;
+        CharSequence texto = e != null ? e.getCharSequence(Notification.EXTRA_TEXT) : null;
+        if (isEmpty(titulo)) titulo = "Llamada";
+        boolean crono = e != null && e.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false);
+
+        // Botones de la notificacion (contestar, colgar...), sin los que piden escribir
+        java.util.ArrayList<Notification.Action> acciones = new java.util.ArrayList<>();
+        if (n.actions != null) {
+            for (Notification.Action a : n.actions) {
+                if (a == null || a.actionIntent == null || isEmpty(a.title)) continue;
+                if (a.getRemoteInputs() != null && a.getRemoteInputs().length > 0) continue;
+                acciones.add(a);
+            }
+        }
+
+        Evento ev = new Evento(Evento.LLAMADA);
+        ev.glifo = GlyphView.TELEFONO;
+        ev.color = 0xFF34C759;
+        ev.clave = sbn.getKey();
+        ev.pkg = sbn.getPackageName();
+        ev.accion = n.contentIntent;
+        ev.titulo = titulo;
+        if (crono) {
+            ev.sub = 2;
+            ev.texto = "Llamada en curso";
+            long desde = n.when > 0 ? Math.max(0, System.currentTimeMillis() - n.when) : 0;
+            ev.base = SystemClock.elapsedRealtime() - desde;
+        } else if (acciones.size() >= 2) {
+            ev.sub = 1;
+            ev.activo = true;
+            ev.texto = "Llamada entrante";
+        } else {
+            ev.sub = 3;
+            ev.texto = isEmpty(texto) ? "Llamando\u2026" : texto;
+        }
+
+        int cuantos = Math.min(2, acciones.size());
+        if (cuantos > 0) {
+            ev.botonTxt = new String[cuantos];
+            ev.botonColor = new int[cuantos];
+            ev.botonRun = new Runnable[cuantos];
+            for (int i = 0; i < cuantos; i++) {
+                final Notification.Action a = acciones.get(i);
+                ev.botonTxt[i] = String.valueOf(a.title);
+                ev.botonColor[i] = esRechazo(a.title) ? 0xFFFF453A : 0xFF34C759;
+                ev.botonRun[i] = new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            a.actionIntent.send();
+                        } catch (Throwable t) {
+                            XposedBridge.log(t);
+                        }
+                    }
+                };
+            }
+        }
+
+        boolean anunciar = ev.sub != ultimaLlamadaSub;
+        ultimaLlamadaSub = ev.sub;
+        IslandController.get(ctx).setLlamada(ev, anunciar);
+    }
+
+    private static boolean esRechazo(CharSequence t) {
+        String s = String.valueOf(t).toLowerCase(java.util.Locale.ROOT);
+        return s.contains("rech") || s.contains("decl") || s.contains("colg")
+                || s.contains("hang") || s.contains("end") || s.contains("reject")
+                || s.contains("termin") || s.contains("finaliz");
     }
 
     /**

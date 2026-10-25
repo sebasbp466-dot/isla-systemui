@@ -271,10 +271,35 @@ public class MainActivity extends Activity {
                 cfg.enabled = v == 1;
             }
         });
-        interruptor(s, "Animación con rebote", cfg.bounce, new IntSetter() {
+        texto(s, "Movimiento de las animaciones", 12, false, cSub);
+        segmentado(s, new String[]{"Suave", "Resorte", "Elástico"}, cfg.animStyle,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.animStyle = v;
+                    }
+                });
+        seek(s, "Velocidad de animación", 50, 200, cfg.speed, new Etiqueta() {
+            @Override
+            public String de(int v) {
+                return v + " %";
+            }
+        }, new IntSetter() {
             @Override
             public void set(int v) {
-                cfg.bounce = v == 1;
+                cfg.speed = v;
+            }
+        });
+        interruptor(s, "Aro de luz al llegar un evento", cfg.glow, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.glow = v == 1;
+            }
+        });
+        interruptor(s, "Vibración suave al expandirse", cfg.haptic, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.haptic = v == 1;
             }
         });
         interruptor(s, "Mostrar icono", cfg.showIcon, new IntSetter() {
@@ -329,6 +354,85 @@ public class MainActivity extends Activity {
                 cfg.fAuric = v == 1;
             }
         });
+        interruptor(fu, "Llamadas (temporizador y botones)", cfg.fLlamada, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fLlamada = v == 1;
+            }
+        });
+        interruptor(fu, "Descargas y progreso", cfg.fProgreso, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fProgreso = v == 1;
+            }
+        });
+        interruptor(fu, "Cámara y micrófono en uso", cfg.fPrivacidad, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fPrivacidad = v == 1;
+            }
+        });
+        interruptor(fu, "Avión, No molestar y ahorro de batería", cfg.fAjustes,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.fAjustes = v == 1;
+                    }
+                });
+        interruptor(fu, "Volumen", cfg.fVolumen, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.fVolumen = v == 1;
+            }
+        });
+        interruptor(fu, "Portapapeles (no muestra el contenido)", cfg.fPortapapeles,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.fPortapapeles = v == 1;
+                    }
+                });
+
+        // ---- Notificaciones: expandidas o minimizadas
+        LinearLayout no = tarjeta(col, "Notificaciones");
+        texto(no, "Minimizada = solo la cápsula con un punto de color; tócala para expandirla. "
+                + "Gestos: tocar, mantener pulsado (acciones), deslizar arriba (descartar), "
+                + "abajo (expandir) y a los lados (eventos recientes).", 12, false, cSub);
+        segmentado(no, new String[]{"Expandir", "Minimizar", "Automático"}, cfg.notifMode,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.notifMode = v;
+                    }
+                });
+        texto(no, "Automático: minimiza si ya hay música o llamada, o si llegan varias seguidas.",
+                12, false, cSub);
+        texto(no, "Apps que siempre llegan minimizadas (paquetes separados por coma)", 12, false,
+                cSub);
+        EditText minimizadas = campo("com.whatsapp,org.telegram.messenger");
+        minimizadas.setText(cfg.minimizadas);
+        minimizadas.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence x, int i, int j, int k) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence x, int i, int j, int k) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable ed) {
+                cfg.minimizadas = IslaConfig.limpiar(ed.toString());
+            }
+        });
+        no.addView(minimizadas);
+        interruptor(no, "Ocultar las notificaciones emergentes de Android",
+                cabeceraOculta(), new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        ocultarEmergentes(v == 1);
+                    }
+                });
 
         // ---- Posición
         LinearLayout po = tarjeta(col, "Posición al expandirse");
@@ -452,6 +556,18 @@ public class MainActivity extends Activity {
         filaPrueba(pr, "Linterna apagada", 3, "Música", 4);
         filaPrueba(pr, "Modo silencio", 5, "Auriculares", 6);
         filaPrueba(pr, "Batería baja", 7, "Batería llena", 8);
+        filaPrueba(pr, "Notif. minimizada", 20, "Notif. expandida", 21);
+        filaPrueba(pr, "Llamada entrante", 10, "Llamada en curso", 11);
+        filaPrueba(pr, "Descarga", 13, "Volumen", 19);
+        filaPrueba(pr, "Cámara", 14, "Micrófono", 15);
+        filaPrueba(pr, "Modo avión", 16, "No molestar", 17);
+        filaPrueba(pr, "Ahorro de batería", 18, "Portapapeles", 22);
+        boton(pr, "Quitar la llamada de prueba", CON, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                probarEvento(12);
+            }
+        });
         boton(pr, "Quitar la música de prueba", CON, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -497,13 +613,37 @@ public class MainActivity extends Activity {
         int notch = dp(28);
         int h2 = dp(30);
         IslandView chica = new IslandView(this, cfg, notch);
-        chica.configurar(muestra, false, false);
+        Evento mini = muestra.copiar();
+        mini.minimizada = true;
+        mini.color = 0xFF0A84FF;
+        chica.configurar(mini, false, false);
         chica.setCorner(h2 / 2f);
         FrameLayout.LayoutParams l2 = new FrameLayout.LayoutParams(
                 Math.max(dp(cfg.compactW), notch + dp(68)), h2,
                 Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         l2.topMargin = dp(8) + h1 + dp(14);
         vista.addView(chica, l2);
+    }
+
+    /** true si las notificaciones emergentes de Android estan desactivadas. */
+    private boolean cabeceraOculta() {
+        try {
+            return android.provider.Settings.Global.getInt(getContentResolver(),
+                    "heads_up_notifications_enabled", 1) == 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Apaga o enciende las notificaciones emergentes de Android (necesita el permiso concedido). */
+    private void ocultarEmergentes(boolean ocultar) {
+        try {
+            android.provider.Settings.Global.putInt(getContentResolver(),
+                    "heads_up_notifications_enabled", ocultar ? 0 : 1);
+        } catch (Throwable t) {
+            Toast.makeText(this, "Falta el permiso para guardar ajustes", Toast.LENGTH_LONG)
+                    .show();
+        }
     }
 
     private void actualizarEstado() {

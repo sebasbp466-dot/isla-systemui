@@ -6,10 +6,15 @@ import android.animation.TimeInterpolator;
 import android.animation.ValueAnimator;
 import android.app.PendingIntent;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.provider.Settings;
 import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -18,8 +23,9 @@ import android.view.WindowManager;
 import android.view.WindowMetrics;
 import android.view.animation.AccelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
-import android.view.animation.OvershootInterpolator;
 import android.widget.FrameLayout;
+
+import java.util.ArrayList;
 
 import de.robv.android.xposed.XposedBridge;
 
@@ -30,19 +36,45 @@ import de.robv.android.xposed.XposedBridge;
  * y la expandida baja justo debajo de la barra de estado, asi nunca tapa la hora ni los iconos.
  * La ventana cambia de tamaño con el estado, de modo que en compacto casi no bloquea toques.
  *
- * Musica: mientras suena queda una capsula compacta persistente con ecualizador.
- * Los demas eventos aparecen encima, se expanden, y despues vuelven a la musica o desaparecen.
+ * Capsulas fijas: una llamada en curso (prioridad) o la musica quedan como capsula compacta
+ * persistente. Los demas eventos aparecen encima, y despues vuelven a la capsula fija o se van.
+ *
+ * Notificaciones: pueden llegar expandidas o minimizadas (solo la capsula); tocar una minimizada
+ * la expande. Gestos: tocar, mantener pulsado (acciones), deslizar arriba (descartar), deslizar
+ * hacia abajo (expandir) y deslizar a los lados (cambiar de evento reciente).
  */
 final class IslandController {
 
     private static final int ESPERA_COMPACTA_MS = 350;
     private static final int DURACION_MUSICA_MS = 6000;
+    private static final int MINIMA_MS = 3200;
+    private static final int MAX_RECIENTES = 6;
+    private static final int LARGO_MS = 450;
+    private static final int ROJO = 0xFFFF453A;
+    private static final int GRIS = 0x33FFFFFF;
 
     private static IslandController inst;
 
     static synchronized IslandController get(Context c) {
         if (inst == null) inst = new IslandController(c);
         return inst;
+    }
+
+    /** Resorte amortiguado: sube, se pasa un poco y vuelve a su sitio. */
+    private static final class Muelle implements TimeInterpolator {
+        private final float amort;
+        private final float freq;
+
+        Muelle(float amort, float freq) {
+            this.amort = amort;
+            this.freq = freq;
+        }
+
+        @Override
+        public float getInterpolation(float t) {
+            if (t >= 1f) return 1f;
+            return (float) (1.0 - Math.exp(-amort * t) * Math.cos(2.0 * Math.PI * freq * t));
+        }
     }
 
     private final Context ctx;
@@ -69,6 +101,8 @@ final class IslandController {
     private IslandView pill;
     private Evento actual;
     private Evento musica;
+    private Evento llamada;
+    private final ArrayList<Evento> recientes = new ArrayList<>();
 
     private boolean shown;
     private boolean expanded;
@@ -76,12 +110,33 @@ final class IslandController {
     private boolean ventanaGrande;
     private boolean musicaSilenciada;
     private boolean pantallaOn = true;
+    private long ultimaNotif;
 
     private ValueAnimator sizeAnim;
     private float cornerPx;
     /** Cada paso nuevo sube el contador; los pasos programados de uno anterior se descartan. */
     private int gen;
+    private Runnable colapsoPend;
+    private int colapsoMs;
+
+    // Gestos
+    private float downX;
     private float downY;
+    private boolean moviendo;
+    private boolean largoHecho;
+    private final Runnable largoRun = new Runnable() {
+        @Override
+        public void run() {
+            if (!moviendo && !largoHecho) {
+                largoHecho = true;
+                try {
+                    largo();
+                } catch (Throwable t) {
+                    XposedBridge.log(t);
+                }
+            }
+        }
+    };
 
     private IslandController(Context c) {
         Context app = c.getApplicationContext();
@@ -107,13 +162,22 @@ final class IslandController {
         });
     }
 
-    /** Fija (o quita, con null) la musica persistente. anunciar: expandir un momento. */
-    void setMusica(final Evento m, final boolean anunciar) {
+    /**
+     * Progreso en directo (descargas). Si ya se ve esa descarga solo se actualiza el aro;
+     * si no, nuevo indica si merece volver a aparecer (minimizada).
+     */
+    void progreso(final Evento e, final boolean nuevo) {
         h.post(new Runnable() {
             @Override
             public void run() {
                 try {
-                    fijarMusica(m, anunciar);
+                    cfg = IslaConfig.get(ctx);
+                    if (!cfg.enabled || !cfg.permite(e.tipo) || !pantallaOn) return;
+                    if (refrescarSiVisible(e)) return;
+                    if (nuevo) {
+                        e.minimizada = true;
+                        mostrar(e);
+                    }
                 } catch (Throwable t) {
                     XposedBridge.log(t);
                 }
@@ -121,14 +185,43 @@ final class IslandController {
         });
     }
 
-    /** Actualiza el contenido si ya se muestra un evento del mismo tipo (porcentaje de carga). */
+    /** Fija (o quita, con null) la musica persistente. anunciar: expandir un momento. */
+    void setMusica(final Evento m, final boolean anunciar) {
+        h.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    fijar(Evento.MUSICA, m, anunciar);
+                } catch (Throwable t) {
+                    XposedBridge.log(t);
+                }
+            }
+        });
+    }
+
+    /** Fija (o quita, con null) la llamada, que tiene prioridad sobre la musica. */
+    void setLlamada(final Evento l, final boolean anunciar) {
+        h.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    fijar(Evento.LLAMADA, l, anunciar);
+                } catch (Throwable t) {
+                    XposedBridge.log(t);
+                }
+            }
+        });
+    }
+
+    /** Actualiza el contenido si ya se muestra un evento igual (porcentaje de carga). */
     void actualizarMismoTipo(final Evento e) {
         h.post(new Runnable() {
             @Override
             public void run() {
-                if (shown && pill != null && expanded && actual != null && actual.tipo == e.tipo) {
-                    actual = e;
-                    pill.configurar(e, true, false);
+                try {
+                    refrescarSiVisible(e);
+                } catch (Throwable t) {
+                    XposedBridge.log(t);
                 }
             }
         });
@@ -143,8 +236,8 @@ final class IslandController {
                     pantallaOn = on;
                     if (!on) {
                         quitarTodo();
-                    } else if (musicaActiva()) {
-                        fijarMusica(musica, false);
+                    } else {
+                        restaurarFijo();
                     }
                 } catch (Throwable t) {
                     XposedBridge.log(t);
@@ -155,36 +248,123 @@ final class IslandController {
 
     // ------------------------------------------------------------------ flujo
 
-    private boolean musicaActiva() {
-        return musica != null && !musicaSilenciada && cfg.fMusica;
+    private Evento fijo() {
+        if (llamada != null && cfg.fLlamada) return llamada;
+        if (musica != null && !musicaSilenciada && cfg.fMusica) return musica;
+        return null;
+    }
+
+    private boolean esFijo(Evento e) {
+        return e != null && (e.tipo == Evento.MUSICA || e.tipo == Evento.LLAMADA);
+    }
+
+    private boolean refrescarSiVisible(Evento e) {
+        if (!shown || pill == null || actual == null || actual.tipo != e.tipo
+                || !e.mismaClave(actual)) {
+            return false;
+        }
+        e.minimizada = actual.minimizada;
+        actual = e;
+        reemplazarReciente(e);
+        pill.configurar(e, expanded, false);
+        return true;
+    }
+
+    private void registrar(Evento e) {
+        if (esFijo(e)) return;
+        reemplazarReciente(e);
+        boolean esta = false;
+        for (Evento r : recientes) {
+            if (r == e) {
+                esta = true;
+                break;
+            }
+        }
+        if (!esta) recientes.add(e);
+        while (recientes.size() > MAX_RECIENTES) recientes.remove(0);
+    }
+
+    private void reemplazarReciente(Evento e) {
+        if (e.clave == null) return;
+        for (int i = 0; i < recientes.size(); i++) {
+            Evento r = recientes.get(i);
+            if (r.tipo == e.tipo && e.clave.equals(r.clave)) {
+                recientes.set(i, e);
+                return;
+            }
+        }
+    }
+
+    /** Una notificacion llega minimizada segun el modo elegido, la app y lo ocupada que este la isla. */
+    private boolean decidirMinimizada(Evento e) {
+        if (e.minimizada) return true;
+        if (e.tipo != Evento.NOTIF) return false;
+        if (e.pkg != null && cfg.isMin(e.pkg)) return true;
+        if (cfg.notifMode == 1) return true;
+        if (cfg.notifMode == 0) return false;
+        boolean ocupada = fijo() != null || (shown && transitorio);
+        boolean rafaga = ultimaNotif != 0
+                && SystemClock.elapsedRealtime() - ultimaNotif < 8000;
+        return ocupada || rafaga;
+    }
+
+    private void cancelarPasos() {
+        h.removeCallbacksAndMessages(null);
+        colapsoPend = null;
+        gen++;
+        cancelarAnimaciones();
     }
 
     private void mostrar(Evento e) {
         cfg = IslaConfig.get(ctx);
         if (!cfg.enabled || !cfg.permite(e.tipo) || !pantallaOn) return;
 
-        h.removeCallbacksAndMessages(null);
-        gen++;
+        // El volumen se actualiza en el sitio mientras sigues pulsando los botones
+        if (e.tipo == Evento.VOLUMEN && shown && actual != null && actual.tipo == Evento.VOLUMEN
+                && pill != null) {
+            actual = e;
+            pill.configurar(e, expanded, false);
+            if (expanded) programarColapso(gen, 1800);
+            return;
+        }
+
+        boolean min = decidirMinimizada(e);
+        registrar(e);
+        if (e.tipo == Evento.NOTIF) ultimaNotif = SystemClock.elapsedRealtime();
+
+        // Hay algo expandido y llega una minimizada: no se interrumpe, solo un destello
+        if (min && shown && pill != null && expanded) {
+            pill.destello(e.color);
+            return;
+        }
+
+        cancelarPasos();
         final int g = gen;
-        cancelarAnimaciones();
         transitorio = true;
         actual = e;
+        e.minimizada = min;
 
         if (shown && pill != null) {
             pill.setAlpha(1f);
             pill.setScaleX(1f);
             pill.setScaleY(1f);
             pill.setTranslationY(0f);
+            pill.setTranslationX(expanded ? 0f : compTx);
             if (expanded) {
                 expandir(g);
             } else {
                 pill.configurar(e, false, false);
-                h.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (g == gen) expandir(g);
-                    }
-                }, 120);
+                pill.destello(e.color);
+                if (min) {
+                    programarColapso(g, e.duracionMs > 0 ? e.duracionMs : minimaMs());
+                } else {
+                    h.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (g == gen) expandir(g);
+                        }
+                    }, 120);
+                }
             }
             return;
         }
@@ -193,91 +373,137 @@ final class IslandController {
         shown = true;
         expanded = false;
         entrar();
-        h.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (g == gen) expandir(g);
-            }
-        }, ESPERA_COMPACTA_MS);
+        pill.destello(e.color);
+        if (min) {
+            programarColapso(g, e.duracionMs > 0 ? e.duracionMs : minimaMs());
+        } else {
+            h.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (g == gen) expandir(g);
+                }
+            }, cfg.ms(ESPERA_COMPACTA_MS));
+        }
     }
 
-    private void fijarMusica(Evento m, boolean anunciar) {
+    private int minimaMs() {
+        return Math.max(MINIMA_MS, cfg.durationMs - 600);
+    }
+
+    /** Capsula persistente (musica o llamada). tipo decide cual de las dos. */
+    private void fijar(int tipo, Evento m, boolean anunciar) {
         cfg = IslaConfig.get(ctx);
-        musica = m;
+        if (tipo == Evento.MUSICA) {
+            musica = m;
+        } else {
+            llamada = m;
+        }
+
         if (m == null) {
-            if (shown && !transitorio) {
-                h.removeCallbacksAndMessages(null);
-                gen++;
-                cancelarAnimaciones();
-                salir(gen);
+            if (shown && actual != null && actual.tipo == tipo && !esTransitorioReal()) {
+                // Era justo la capsula fija que se acaba de ir
+                if (expanded) {
+                    cancelarPasos();
+                    colapsar(gen);
+                } else {
+                    restaurarFijo();
+                }
+            } else if (shown && !transitorio) {
+                restaurarFijo();
             }
             return;
         }
-        if (anunciar) musicaSilenciada = false;
-        if (!cfg.enabled || !cfg.fMusica || musicaSilenciada || !pantallaOn) return;
+
+        if (anunciar && tipo == Evento.MUSICA) musicaSilenciada = false;
+        if (tipo == Evento.MUSICA && (llamada != null && cfg.fLlamada)) return;
+        if (!cfg.enabled || !cfg.permite(tipo) || !pantallaOn) return;
+        if (tipo == Evento.MUSICA && musicaSilenciada) return;
 
         if (transitorio) {
-            // Hay otro evento en pantalla: al terminar volvera a la musica.
-            // Si lo que se ve es la propia musica expandida, se refresca.
-            if (expanded && actual != null && actual.tipo == Evento.MUSICA && pill != null) {
+            // Hay otro evento en pantalla: al terminar volvera a la capsula fija.
+            // Si lo que se ve es esa misma capsula expandida, se refresca.
+            if (expanded && actual != null && actual.tipo == tipo && pill != null) {
                 actual = m;
                 pill.configurar(m, true, false);
+            } else if (anunciar && tipo == Evento.LLAMADA) {
+                // Una llamada entrante interrumpe lo que se este viendo
+                mostrarFijo(m, true);
             }
             return;
         }
+        mostrarFijo(m, anunciar);
+    }
 
+    /** true si lo que hay en pantalla es un evento puntual y no la capsula fija. */
+    private boolean esTransitorioReal() {
+        return transitorio && !esFijo(actual);
+    }
+
+    private void mostrarFijo(Evento m, boolean anunciar) {
         if (!shown) {
-            h.removeCallbacksAndMessages(null);
-            gen++;
-            cancelarAnimaciones();
+            cancelarPasos();
             actual = m;
             construir(m);
             shown = true;
             expanded = false;
+            transitorio = false;
             entrar();
-            if (anunciar) anunciarMusica();
+            if (anunciar) anunciarFijo();
             return;
         }
-
         actual = m;
         if (anunciar) {
-            anunciarMusica();
+            anunciarFijo();
         } else if (pill != null) {
-            pill.configurar(m, false, false);
+            pill.configurar(m, expanded, false);
         }
     }
 
-    private void anunciarMusica() {
+    private void anunciarFijo() {
         transitorio = true;
-        h.removeCallbacksAndMessages(null);
-        gen++;
+        cancelarPasos();
         final int g = gen;
+        if (pill != null) {
+            pill.setTranslationY(0f);
+            pill.setAlpha(1f);
+            pill.destello(actual != null ? actual.color : 0xFFFFFFFF);
+        }
         h.postDelayed(new Runnable() {
             @Override
             public void run() {
                 if (g == gen) expandir(g);
             }
-        }, ESPERA_COMPACTA_MS);
+        }, cfg.ms(ESPERA_COMPACTA_MS));
     }
 
-    /** Toque sobre la capsula compacta de la musica: expandirla. */
-    private void expandirMusica() {
-        if (!musicaActiva()) return;
-        transitorio = true;
-        h.removeCallbacksAndMessages(null);
-        gen++;
-        cancelarAnimaciones();
-        actual = musica;
-        expandir(gen);
+    /** Vuelve a la capsula fija si la hay; si no, quita la isla. */
+    private void restaurarFijo() {
+        Evento f = fijo();
+        if (f == null) {
+            if (shown && !transitorio) {
+                cancelarPasos();
+                salir(gen);
+            }
+            return;
+        }
+        if (transitorio) return;
+        if (!shown) {
+            mostrarFijo(f, false);
+        } else if (pill != null) {
+            actual = f;
+            pill.configurar(f, false, false);
+        }
     }
 
     private void entrar() {
         pill.setAlpha(0f);
         pill.setScaleX(0.6f);
         pill.setScaleY(0.6f);
+        TimeInterpolator ip = cfg.animStyle == 0 ? new DecelerateInterpolator(1.4f)
+                : new Muelle(5.5f, cfg.animStyle == 2 ? 1.5f : 1.0f);
         pill.animate().alpha(1f).scaleX(1f).scaleY(1f)
-                .setDuration(240)
-                .setInterpolator(new DecelerateInterpolator())
+                .setDuration(cfg.ms(cfg.animStyle == 0 ? 240 : 420))
+                .setInterpolator(ip)
                 .start();
     }
 
@@ -286,47 +512,94 @@ final class IslandController {
         expanded = true;
         ventana(true);
         pill.configurar(actual, true, true);
+        pill.destello(actual.color);
+        if (cfg.haptic) vibrar(false);
         int eh = dp(IslandView.alturaDp(cfg, actual));
-        TimeInterpolator ip = cfg.bounce ? new OvershootInterpolator(0.9f)
-                : new DecelerateInterpolator();
-        animarRect(expW, eh, expTop, 0f, Math.min(dp(cfg.radiusDp), eh / 2f), 380, ip, null, g);
-        programarColapso(g, actual.tipo == Evento.MUSICA ? DURACION_MUSICA_MS : cfg.durationMs);
+        float radio = Math.min(dp(cfg.radiusDp), eh / 2f);
+        switch (cfg.animStyle) {
+            case 0:
+                animarRect(expW, eh, expTop, 0f, radio, cfg.ms(340),
+                        new DecelerateInterpolator(1.4f), new DecelerateInterpolator(1.4f), null, g);
+                break;
+            case 2:
+                // Elastico: ancho y alto rebotan con distinta frecuencia (efecto gelatina)
+                animarRect(expW, eh, expTop, 0f, radio, cfg.ms(560),
+                        new Muelle(5.2f, 1.5f), new Muelle(4.6f, 1.15f), null, g);
+                break;
+            default:
+                animarRect(expW, eh, expTop, 0f, radio, cfg.ms(460),
+                        new Muelle(6f, 1.0f), new Muelle(6f, 1.0f), null, g);
+                break;
+        }
+        int ms = actual.duracionMs > 0 ? actual.duracionMs
+                : (actual.tipo == Evento.MUSICA ? DURACION_MUSICA_MS : cfg.durationMs);
+        if (actual.tipo == Evento.LLAMADA && actual.sub == 1) ms = 0;
+        if (actual.botonTxt != null && actual.botonTxt.length > 0 && actual.tipo != Evento.LLAMADA) {
+            ms = Math.max(ms, 6000);
+        }
+        colapsoMs = ms;
+        if (ms > 0) programarColapso(g, ms);
     }
 
     private void programarColapso(final int g, int ms) {
-        h.postDelayed(new Runnable() {
+        if (colapsoPend != null) h.removeCallbacks(colapsoPend);
+        colapsoMs = ms;
+        colapsoPend = new Runnable() {
             @Override
             public void run() {
-                if (g == gen) colapsar(g);
+                if (g != gen) return;
+                if (expanded) {
+                    colapsar(g);
+                } else {
+                    despuesDeColapsar(g, 0);
+                }
             }
-        }, ms);
+        };
+        h.postDelayed(colapsoPend, ms);
+    }
+
+    private void pausarColapso() {
+        if (colapsoPend != null) h.removeCallbacks(colapsoPend);
+    }
+
+    /** El usuario toco un control: el temporizador empieza de nuevo. */
+    private void reiniciarColapso() {
+        if (!shown || !expanded || colapsoMs <= 0) return;
+        programarColapso(gen, colapsoMs);
     }
 
     private void colapsar(final int g) {
         if (pill == null) return;
-        animarRect(compW, compH, compTop, compTx, compH / 2f, 260, new DecelerateInterpolator(),
+        animarRect(compW, compH, compTop, compTx, compH / 2f, cfg.ms(260),
+                new DecelerateInterpolator(), new DecelerateInterpolator(),
                 new Runnable() {
                     @Override
                     public void run() {
                         if (pill == null) return;
                         expanded = false;
                         ventana(false);
-                        if (musicaActiva()) {
-                            // Vuelve a la capsula persistente de la musica
-                            actual = musica;
-                            transitorio = false;
-                            pill.configurar(musica, false, false);
-                        } else {
-                            pill.configurar(actual, false, false);
-                            h.postDelayed(new Runnable() {
-                                @Override
-                                public void run() {
-                                    if (g == gen) salir(g);
-                                }
-                            }, 450);
-                        }
+                        despuesDeColapsar(g, 450);
                     }
                 }, g);
+    }
+
+    /** Termina un evento puntual: vuelve a la capsula fija o se va. */
+    private void despuesDeColapsar(final int g, int esperaMs) {
+        if (pill == null) return;
+        Evento f = fijo();
+        if (f != null) {
+            actual = f;
+            transitorio = false;
+            pill.configurar(f, false, false);
+        } else {
+            pill.configurar(actual, false, false);
+            h.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (g == gen) salir(g);
+                }
+            }, esperaMs);
+        }
     }
 
     private void salir(final int g) {
@@ -335,7 +608,7 @@ final class IslandController {
             return;
         }
         pill.animate().alpha(0f).scaleX(0.6f).scaleY(0.6f)
-                .setDuration(200)
+                .setDuration(cfg.ms(200))
                 .setInterpolator(new AccelerateInterpolator())
                 .start();
         h.postDelayed(new Runnable() {
@@ -343,63 +616,61 @@ final class IslandController {
             public void run() {
                 if (g == gen) quitar();
             }
-        }, 220);
+        }, cfg.ms(220));
     }
 
-    /** Deslizar hacia arriba. */
-    private void deslizarArriba() {
-        h.removeCallbacksAndMessages(null);
-        gen++;
+    /** Descarta la isla con un deslizamiento (arriba o a un lado). */
+    private void descartar(final float dx, final float dy) {
+        cancelarPasos();
         final int g = gen;
-        cancelarAnimaciones();
         if (pill == null) return;
-        pill.setTranslationY(0f);
 
-        if (expanded && musicaActiva()) {
-            // La musica expandida solo se encoge
+        if (expanded && esFijo(actual)) {
+            // La musica o la llamada expandida solo se encoge
+            pill.animate().translationX(0f).translationY(0f).setDuration(120).start();
             colapsar(g);
             return;
         }
-        if (!expanded && transitorio == false && actual == musica) {
-            // Capsula persistente: se oculta hasta la proxima cancion
+        if (!expanded && esFijo(actual)) {
+            if (actual.tipo == Evento.LLAMADA) {
+                // La llamada en curso no se esconde: vuelve a su sitio
+                pill.animate().translationX(compTx).translationY(0f).setDuration(120).start();
+                return;
+            }
+            // Capsula de musica: se oculta hasta la proxima cancion
             musicaSilenciada = true;
         }
-        pill.animate().translationY(-dp(30)).alpha(0f).setDuration(160).start();
+        pill.animate().translationX(pill.getTranslationX() + dx).translationY(dy).alpha(0f)
+                .setDuration(cfg.ms(170)).start();
         h.postDelayed(new Runnable() {
             @Override
             public void run() {
-                if (g == gen) quitar();
+                if (g != gen) return;
+                quitar();
+                // Si habia una capsula fija debajo, vuelve a su sitio
+                restaurarFijo();
             }
-        }, 170);
+        }, cfg.ms(180));
     }
 
+    /** Toque: expande una capsula compacta; en expandida abre la accion del evento. */
     private void tocar() {
-        if (pill == null) return;
+        if (pill == null || actual == null) return;
         if (!expanded) {
-            if (!transitorio && actual == musica && musicaActiva()) {
-                expandirMusica();
-            }
+            cancelarPasos();
+            transitorio = true;
+            pill.setTranslationY(0f);
+            pill.setTranslationX(compTx);
+            expandir(gen);
             return;
         }
-        PendingIntent p = actual != null ? actual.accion : null;
-        boolean eraMusica = actual != null && actual.tipo == Evento.MUSICA;
-        if (eraMusica && musicaActiva()) {
-            h.removeCallbacksAndMessages(null);
-            gen++;
-            cancelarAnimaciones();
+        PendingIntent p = actual.accion;
+        boolean fija = esFijo(actual);
+        if (fija) {
+            cancelarPasos();
             colapsar(gen);
         } else {
-            h.removeCallbacksAndMessages(null);
-            gen++;
-            final int g = gen;
-            cancelarAnimaciones();
-            pill.animate().translationY(-dp(30)).alpha(0f).setDuration(160).start();
-            h.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    if (g == gen) quitar();
-                }
-            }, 170);
+            descartar(0f, -dp(30));
         }
         if (p != null) {
             try {
@@ -410,10 +681,200 @@ final class IslandController {
         }
     }
 
+    /** Mantener pulsado: expande y, en notificaciones, abre el panel de acciones. */
+    private void largo() {
+        if (pill == null || actual == null) return;
+        vibrar(true);
+        Evento a = actual;
+        if (a.tipo == Evento.MUSICA) {
+            if (!expanded) {
+                tocar();
+            } else {
+                // Expandida: ocultar la musica hasta la proxima cancion
+                musicaSilenciada = true;
+                cancelarPasos();
+                colapsar(gen);
+            }
+            return;
+        }
+        if (a.tipo == Evento.LLAMADA) {
+            if (!expanded) tocar();
+            return;
+        }
+        // Panel de acciones: la isla se expande con botones
+        final Evento p = a.copiar();
+        final String pkg = a.pkg;
+        ArrayList<String> txt = new ArrayList<>();
+        ArrayList<Integer> col = new ArrayList<>();
+        ArrayList<Runnable> run = new ArrayList<>();
+        if (a.nativaTxt != null && a.nativaPi != null) {
+            final PendingIntent pi = a.nativaPi;
+            txt.add(String.valueOf(a.nativaTxt));
+            col.add(GRIS);
+            run.add(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        pi.send();
+                    } catch (Throwable t) {
+                        XposedBridge.log(t);
+                    }
+                }
+            });
+        }
+        if (pkg != null) {
+            txt.add("Minimizar");
+            col.add(GRIS);
+            run.add(new Runnable() {
+                @Override
+                public void run() {
+                    guardarLista(pkg, true);
+                    confirmar("Minimizada", pkg);
+                }
+            });
+            txt.add("Silenciar");
+            col.add(0x66FF453A);
+            run.add(new Runnable() {
+                @Override
+                public void run() {
+                    guardarLista(pkg, false);
+                    confirmar("Silenciada", pkg);
+                }
+            });
+        }
+        txt.add("Cerrar");
+        col.add(GRIS);
+        run.add(new Runnable() {
+            @Override
+            public void run() {
+                // solo cierra
+            }
+        });
+        p.botonTxt = txt.toArray(new String[0]);
+        p.botonColor = new int[col.size()];
+        for (int i = 0; i < col.size(); i++) p.botonColor[i] = col.get(i);
+        p.botonRun = run.toArray(new Runnable[0]);
+
+        cancelarPasos();
+        transitorio = true;
+        actual = p;
+        pill.setTranslationY(0f);
+        pill.setTranslationX(expanded ? 0f : compTx);
+        expandir(gen);
+    }
+
+    /** Guarda en los ajustes que una app se silencie (minim=false) o llegue minimizada. */
+    private void guardarLista(String pkg, boolean minim) {
+        try {
+            IslaConfig c = IslaConfig.load(ctx);
+            if (minim) {
+                c.minimizadas = IslaConfig.agregar(c.minimizadas, pkg);
+            } else {
+                c.blocked = IslaConfig.agregar(c.blocked, pkg);
+            }
+            Settings.Secure.putString(ctx.getContentResolver(), IslaConfig.KEY, c.serialize());
+        } catch (Throwable t) {
+            XposedBridge.log(t);
+        }
+    }
+
+    private void confirmar(final String titulo, final String pkg) {
+        h.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                Evento e = new Evento(Evento.AJUSTE);
+                e.glifo = GlyphView.CHECK;
+                e.color = 0xFF34C759;
+                e.titulo = titulo;
+                e.texto = etiqueta(pkg);
+                e.duracionMs = 1800;
+                try {
+                    mostrar(e);
+                } catch (Throwable t) {
+                    XposedBridge.log(t);
+                }
+            }
+        }, 450);
+    }
+
+    private String etiqueta(String pkg) {
+        try {
+            PackageManager pm = ctx.getPackageManager();
+            return String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)));
+        } catch (Throwable t) {
+            return pkg;
+        }
+    }
+
+    /** Deslizar a los lados con la isla expandida: pasa al evento reciente anterior o siguiente. */
+    private void navegar(final int dir) {
+        if (!expanded || pill == null) {
+            return;
+        }
+        int i = -1;
+        for (int k = 0; k < recientes.size(); k++) {
+            if (recientes.get(k) == actual
+                    || (actual != null && actual.clave != null && actual.tipo == recientes.get(k).tipo
+                    && actual.clave.equals(recientes.get(k).clave))) {
+                i = k;
+                break;
+            }
+        }
+        int destino;
+        if (i < 0) {
+            destino = recientes.size() - 1;
+        } else {
+            // Deslizar a la izquierda (dir>0) = mas reciente, a la derecha = mas antiguo
+            destino = i + dir;
+        }
+        if (destino < 0 || destino >= recientes.size() || recientes.isEmpty()) {
+            // No hay mas: rebote elastico
+            pill.animate().translationX(0f).translationY(0f).setDuration(cfg.ms(260))
+                    .setInterpolator(new Muelle(6f, 1.4f)).start();
+            reanudarColapso();
+            return;
+        }
+        final Evento sig = recientes.get(destino);
+        cancelarPasos();
+        final int g = gen;
+        transitorio = true;
+        pill.animate().translationX(-dir * dp(90)).alpha(0f).setDuration(cfg.ms(110))
+                .withEndAction(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (g != gen || pill == null) return;
+                        actual = sig;
+                        pill.configurar(sig, true, true);
+                        pill.setTranslationX(dir * dp(70));
+                        pill.animate().translationX(0f).alpha(1f).setDuration(cfg.ms(220))
+                                .setInterpolator(new DecelerateInterpolator()).start();
+                        int eh = dp(IslandView.alturaDp(cfg, sig));
+                        animarRect(expW, eh, expTop, 0f, Math.min(dp(cfg.radiusDp), eh / 2f),
+                                cfg.ms(260), new DecelerateInterpolator(),
+                                new DecelerateInterpolator(), null, g);
+                        programarColapso(g, cfg.durationMs);
+                    }
+                }).start();
+    }
+
+    private void reanudarColapso() {
+        if (!shown || !expanded || colapsoMs <= 0) return;
+        programarColapso(gen, Math.max(2000, colapsoMs / 2));
+    }
+
+    private void vibrar(boolean fuerte) {
+        try {
+            Vibrator v = ctx.getSystemService(Vibrator.class);
+            if (v == null) return;
+            v.vibrate(VibrationEffect.createPredefined(fuerte ? VibrationEffect.EFFECT_CLICK
+                    : VibrationEffect.EFFECT_TICK));
+        } catch (Throwable ignorado) {
+            // sin vibrador o sin permiso: no pasa nada
+        }
+    }
+
     private void quitarTodo() {
-        h.removeCallbacksAndMessages(null);
-        gen++;
-        cancelarAnimaciones();
+        cancelarPasos();
         quitar();
     }
 
@@ -434,6 +895,7 @@ final class IslandController {
         root = null;
         pill = null;
         ventanaGrande = false;
+        recientes.clear();
     }
 
     // ------------------------------------------------------------------ medidas y ventana
@@ -489,8 +951,9 @@ final class IslandController {
         int w;
         int hh;
         if (grande) {
-            w = expW + dp(40);
-            hh = expTop + dp(IslandView.alturaMaxDp(cfg)) + dp(16);
+            // Margen extra para que el rebote del resorte no se recorte
+            w = expW + dp(64);
+            hh = expTop + dp(IslandView.alturaMaxDp(cfg)) + dp(28);
         } else {
             w = compW + 2 * Math.abs(compTx) + dp(24);
             hh = compTop + compH + dp(8);
@@ -523,6 +986,10 @@ final class IslandController {
 
     // ------------------------------------------------------------------ vistas y animacion
 
+    private float baseTx() {
+        return expanded ? 0f : compTx;
+    }
+
     private void construir(Evento e) {
         medir();
         root = new FrameLayout(ctx);
@@ -530,31 +997,76 @@ final class IslandController {
         pill.configurar(e, false, false);
         cornerPx = compH / 2f;
         pill.setCorner(cornerPx);
+        pill.setAlInteraccion(new Runnable() {
+            @Override
+            public void run() {
+                reiniciarColapso();
+            }
+        });
+        pill.setAlBoton(new Runnable() {
+            @Override
+            public void run() {
+                // Contestar o colgar: la notificacion de la llamada cambiara sola
+                if (actual != null && actual.tipo == Evento.LLAMADA) return;
+                descartar(0f, -dp(30));
+            }
+        });
 
         pill.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent ev) {
                 if (pill == null) return false;
+                float dx = ev.getRawX() - downX;
+                float dy = ev.getRawY() - downY;
                 switch (ev.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
+                        downX = ev.getRawX();
                         downY = ev.getRawY();
+                        moviendo = false;
+                        largoHecho = false;
+                        pausarColapso();
+                        h.postDelayed(largoRun, LARGO_MS);
                         return true;
                     case MotionEvent.ACTION_MOVE:
-                        float dy = ev.getRawY() - downY;
-                        if (dy < 0) pill.setTranslationY(dy);
+                        if (!moviendo && (Math.abs(dx) > dp(8) || Math.abs(dy) > dp(8))) {
+                            moviendo = true;
+                            h.removeCallbacks(largoRun);
+                        }
+                        if (moviendo && !largoHecho) {
+                            if (Math.abs(dx) > Math.abs(dy)) {
+                                pill.setTranslationX(baseTx() + dx * 0.7f);
+                            } else if (dy < 0) {
+                                pill.setTranslationY(dy);
+                            } else if (!expanded) {
+                                pill.setTranslationY(Math.min(dy * 0.35f, dp(14)));
+                            }
+                        }
                         return true;
                     case MotionEvent.ACTION_UP:
-                        float total = ev.getRawY() - downY;
-                        if (total < -dp(24)) {
-                            deslizarArriba();
-                        } else if (Math.abs(total) < dp(8)) {
+                        h.removeCallbacks(largoRun);
+                        if (largoHecho) {
+                            reanudarColapso();
+                            return true;
+                        }
+                        if (Math.abs(dx) > dp(48) && Math.abs(dx) > Math.abs(dy)) {
+                            if (expanded) {
+                                navegar(dx < 0 ? 1 : -1);
+                            } else {
+                                descartar(dx < 0 ? -dp(60) : dp(60), 0f);
+                            }
+                        } else if (dy < -dp(24)) {
+                            descartar(0f, -dp(30));
+                        } else if (dy > dp(24) && !expanded) {
+                            tocar();
+                        } else if (Math.abs(dx) < dp(8) && Math.abs(dy) < dp(8)) {
                             tocar();
                         } else {
-                            pill.animate().translationY(0f).setDuration(120).start();
+                            volverASitio();
                         }
                         return true;
                     case MotionEvent.ACTION_CANCEL:
-                        pill.animate().translationY(0f).setDuration(120).start();
+                        h.removeCallbacks(largoRun);
+                        volverASitio();
                         return true;
                     default:
                         return false;
@@ -580,9 +1092,19 @@ final class IslandController {
                 + "px)");
     }
 
+    /** Suelta sin gesto valido: vuelve a su sitio con un pequeño rebote. */
+    private void volverASitio() {
+        if (pill == null) return;
+        pill.animate().translationX(baseTx()).translationY(0f).setDuration(cfg.ms(240))
+                .setInterpolator(cfg.animStyle == 0 ? new DecelerateInterpolator()
+                        : new Muelle(6f, 1.3f))
+                .start();
+        reanudarColapso();
+    }
+
     private void animarRect(final int toW, final int toH, final int toTop, final float toTx,
-                            final float toR, int ms, TimeInterpolator ip, final Runnable alTerminar,
-                            final int g) {
+                            final float toR, int ms, final TimeInterpolator ipW,
+                            final TimeInterpolator ipH, final Runnable alTerminar, final int g) {
         if (pill == null) return;
         final FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) pill.getLayoutParams();
         final int fromW = lp.width;
@@ -595,20 +1117,22 @@ final class IslandController {
         final ValueAnimator va = ValueAnimator.ofFloat(0f, 1f);
         sizeAnim = va;
         va.setDuration(ms);
-        va.setInterpolator(ip);
+        va.setInterpolator(null);
         va.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
             public void onAnimationUpdate(ValueAnimator a) {
                 if (g != gen || pill == null) return;
                 float f = (Float) a.getAnimatedValue();
-                lp.width = Math.round(fromW + (toW - fromW) * f);
-                lp.height = Math.round(fromH + (toH - fromH) * f);
-                lp.topMargin = Math.round(fromTop + (toTop - fromTop) * f);
+                float fw = ipW.getInterpolation(f);
+                float fh = ipH.getInterpolation(f);
+                lp.width = Math.max(1, Math.round(fromW + (toW - fromW) * fw));
+                lp.height = Math.max(1, Math.round(fromH + (toH - fromH) * fh));
+                lp.topMargin = Math.round(fromTop + (toTop - fromTop) * fh);
                 pill.setLayoutParams(lp);
                 pill.setPivotX(lp.width / 2f);
-                pill.setTranslationX(fromTx + (toTx - fromTx) * f);
-                cornerPx = Math.max(0f, fromR + (toR - fromR) * f);
-                pill.setCorner(cornerPx);
+                pill.setTranslationX(fromTx + (toTx - fromTx) * fw);
+                cornerPx = Math.max(0f, fromR + (toR - fromR) * fh);
+                pill.setCorner(Math.min(cornerPx, lp.height / 2f));
             }
         });
         va.addListener(new AnimatorListenerAdapter() {

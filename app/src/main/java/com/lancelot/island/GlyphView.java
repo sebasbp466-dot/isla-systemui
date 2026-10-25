@@ -30,6 +30,17 @@ final class GlyphView extends View {
     static final int SIGUIENTE = 9;
     static final int ANTERIOR = 10;
     static final int RAYO = 11;
+    static final int TELEFONO = 12;
+    static final int CAMARA = 13;
+    static final int MICROFONO = 14;
+    static final int AVION = 15;
+    static final int LUNA = 16;
+    static final int AHORRO = 17;
+    static final int VOLUMEN = 18;
+    static final int PORTAPAPELES = 19;
+    static final int DESCARGA = 20;
+    static final int COLGAR = 21;
+    static final int MENSAJE = 22;
 
     private static final int AMARILLO = 0xFFFFD60A;
     private static final int VERDE = 0xFF34C759;
@@ -85,7 +96,8 @@ final class GlyphView extends View {
         });
         animEntrada.start();
 
-        boolean pulsa = activo && (tipo == LINTERNA || tipo == BATERIA || tipo == RAYO);
+        boolean pulsa = activo && (tipo == LINTERNA || tipo == BATERIA || tipo == RAYO
+                || tipo == TELEFONO || tipo == CAMARA || tipo == MICROFONO || tipo == DESCARGA);
         if (pulsa) {
             animPulso = ValueAnimator.ofFloat(0f, 1f);
             animPulso.setDuration(1100);
@@ -151,6 +163,39 @@ final class GlyphView extends View {
                 break;
             case CHECK:
                 check(c);
+                break;
+            case TELEFONO:
+                telefono(c, false);
+                break;
+            case COLGAR:
+                telefono(c, true);
+                break;
+            case CAMARA:
+                camara(c);
+                break;
+            case MICROFONO:
+                microfono(c);
+                break;
+            case AVION:
+                avion(c);
+                break;
+            case LUNA:
+                luna(c);
+                break;
+            case AHORRO:
+                ahorro(c);
+                break;
+            case VOLUMEN:
+                volumen(c);
+                break;
+            case PORTAPAPELES:
+                portapapeles(c);
+                break;
+            case DESCARGA:
+                descarga(c);
+                break;
+            case MENSAJE:
+                mensaje(c);
                 break;
             case PLAY:
                 relleno();
@@ -395,5 +440,237 @@ final class GlyphView extends View {
         parcial.reset();
         pm.getSegment(0f, pm.getLength() * anim, parcial, true);
         c.drawPath(parcial, p);
+    }
+
+    // ------------------------------------------------------------------ iconos nuevos
+
+    private void telefono(Canvas c, boolean colgar) {
+        float ang;
+        if (colgar) {
+            ang = 135f;
+        } else if (activo && modo == 1) {
+            // Llamada entrante: el telefono vibra
+            ang = 14f * seno() * (float) Math.sin(pulso * Math.PI * 6.0);
+        } else {
+            ang = -26f * (1f - anim);
+        }
+        c.save();
+        c.rotate(ang, 12f, 12f);
+        relleno();
+        p.setColor(colgar ? ROJO : color);
+        path.reset();
+        path.moveTo(6.62f, 10.79f);
+        path.cubicTo(8.06f, 13.62f, 10.38f, 15.93f, 13.21f, 17.38f);
+        path.lineTo(15.41f, 15.18f);
+        path.cubicTo(15.68f, 14.91f, 16.08f, 14.82f, 16.43f, 14.94f);
+        path.cubicTo(17.55f, 15.31f, 18.76f, 15.51f, 20f, 15.51f);
+        path.cubicTo(20.55f, 15.51f, 21f, 15.96f, 21f, 16.51f);
+        path.lineTo(21f, 20f);
+        path.cubicTo(21f, 20.55f, 20.55f, 21f, 20f, 21f);
+        path.cubicTo(10.61f, 21f, 3f, 13.39f, 3f, 4f);
+        path.cubicTo(3f, 3.45f, 3.45f, 3f, 4f, 3f);
+        path.lineTo(7.5f, 3f);
+        path.cubicTo(8.05f, 3f, 8.5f, 3.45f, 8.5f, 4f);
+        path.cubicTo(8.5f, 5.25f, 8.7f, 6.45f, 9.07f, 7.57f);
+        path.cubicTo(9.18f, 7.92f, 9.10f, 8.31f, 8.82f, 8.59f);
+        path.lineTo(6.62f, 10.79f);
+        path.close();
+        c.drawPath(path, p);
+        c.restore();
+    }
+
+    private void camara(Canvas c) {
+        float esc = 0.8f + 0.2f * anim;
+        c.save();
+        c.scale(esc, esc, 12f, 12f);
+        relleno();
+        p.setColor(color);
+        rf.set(8.5f, 4.5f, 15.5f, 8f);
+        c.drawRoundRect(rf, 1.2f, 1.2f, p);
+        rf.set(2.5f, 6.8f, 21.5f, 19.5f);
+        c.drawRoundRect(rf, 2.6f, 2.6f, p);
+        p.setColor(0xCC000000);
+        c.drawCircle(12f, 13.2f, 4.2f, p);
+        p.setColor(conAlfa(Color.WHITE, 0.9f));
+        c.drawCircle(12f, 13.2f, 2.5f, p);
+        c.restore();
+        if (activo) {
+            relleno();
+            p.setColor(conAlfa(ROJO, 0.55f + 0.45f * (0.5f + 0.5f * seno())));
+            c.drawCircle(19f, 9.4f, 1.1f, p);
+        }
+    }
+
+    private void microfono(Canvas c) {
+        float esc = 0.8f + 0.2f * anim;
+        c.save();
+        c.scale(esc, esc, 12f, 12f);
+        relleno();
+        p.setColor(color);
+        rf.set(8.7f, 2.8f, 15.3f, 14.2f);
+        c.drawRoundRect(rf, 3.3f, 3.3f, p);
+        trazo(1.9f);
+        rf.set(5.8f, 6.5f, 18.2f, 17.5f);
+        c.drawArc(rf, 0f, 180f, false, p);
+        c.drawLine(12f, 17.5f, 12f, 21f, p);
+        c.drawLine(8.8f, 21f, 15.2f, 21f, p);
+        c.restore();
+        if (activo) {
+            float a = 0.5f + 0.5f * seno();
+            trazo(1.5f);
+            p.setColor(conAlfa(color, 0.35f + 0.5f * a));
+            rf.set(3.2f, 4.2f, 20.8f, 19.8f);
+            c.drawArc(rf, -35f, 70f, false, p);
+            c.drawArc(rf, 145f, 70f, false, p);
+        }
+    }
+
+    private void avion(Canvas c) {
+        float slide = 1f - anim;
+        c.save();
+        c.translate(-9f * slide, 9f * slide);
+        c.rotate(45f, 12f, 12f);
+        relleno();
+        p.setColor(conAlfa(color, Math.min(1f, 0.25f + anim)));
+        path.reset();
+        path.moveTo(21f, 16f);
+        path.lineTo(21f, 14f);
+        path.lineTo(13f, 9f);
+        path.lineTo(13f, 3.5f);
+        path.cubicTo(13f, 2.67f, 12.33f, 2f, 11.5f, 2f);
+        path.cubicTo(10.67f, 2f, 10f, 2.67f, 10f, 3.5f);
+        path.lineTo(10f, 9f);
+        path.lineTo(2f, 14f);
+        path.lineTo(2f, 16f);
+        path.lineTo(10f, 13.5f);
+        path.lineTo(10f, 19f);
+        path.lineTo(8f, 20.5f);
+        path.lineTo(8f, 22f);
+        path.lineTo(11.5f, 21f);
+        path.lineTo(15f, 22f);
+        path.lineTo(15f, 20.5f);
+        path.lineTo(13f, 19f);
+        path.lineTo(13f, 13.5f);
+        path.close();
+        c.drawPath(path, p);
+        c.restore();
+        if (!activo) {
+            trazo(2f);
+            p.setColor(ROJO);
+            c.drawLine(4.5f, 4.5f, 19.5f, 19.5f, p);
+        }
+    }
+
+    private final Path luna2 = new Path();
+
+    private void luna(Canvas c) {
+        c.save();
+        c.rotate(-40f * (1f - anim), 12f, 12f);
+        path.reset();
+        path.addCircle(12f, 12f, 8.6f, Path.Direction.CW);
+        luna2.reset();
+        luna2.addCircle(16.2f, 8.4f, 7.2f, Path.Direction.CW);
+        path.op(luna2, Path.Op.DIFFERENCE);
+        relleno();
+        p.setColor(color);
+        c.drawPath(path, p);
+        c.restore();
+    }
+
+    private void ahorro(Canvas c) {
+        trazo(1.5f);
+        p.setColor(conAlfa(Color.WHITE, 0.9f));
+        rf.set(2.5f, 6.5f, 19.5f, 17.5f);
+        c.drawRoundRect(rf, 2.6f, 2.6f, p);
+        relleno();
+        p.setColor(conAlfa(Color.WHITE, 0.9f));
+        rf.set(20.3f, 10f, 22f, 14f);
+        c.drawRoundRect(rf, 0.8f, 0.8f, p);
+        float esc = 0.4f + 0.6f * anim;
+        c.save();
+        c.scale(esc, esc, 11f, 12f);
+        trazo(2.2f);
+        p.setColor(color);
+        c.drawLine(11f, 8.6f, 11f, 15.4f, p);
+        c.drawLine(7.6f, 12f, 14.4f, 12f, p);
+        c.restore();
+    }
+
+    private void volumen(Canvas c) {
+        relleno();
+        p.setColor(Color.WHITE);
+        path.reset();
+        path.moveTo(3.5f, 9.5f);
+        path.lineTo(7.5f, 9.5f);
+        path.lineTo(12.5f, 5f);
+        path.lineTo(12.5f, 19f);
+        path.lineTo(7.5f, 14.5f);
+        path.lineTo(3.5f, 14.5f);
+        path.close();
+        c.drawPath(path, p);
+        if (nivel <= 0.01f) {
+            trazo(2f);
+            p.setColor(ROJO);
+            c.drawLine(15.5f, 9.5f, 20.5f, 14.5f, p);
+            c.drawLine(20.5f, 9.5f, 15.5f, 14.5f, p);
+            return;
+        }
+        trazo(1.8f);
+        p.setColor(conAlfa(color, anim));
+        rf.set(9.5f, 8f, 17f, 16f);
+        c.drawArc(rf, -55f, 110f, false, p);
+        if (nivel > 0.45f) {
+            rf.set(7f, 4.8f, 21f, 19.2f);
+            c.drawArc(rf, -55f, 110f, false, p);
+        }
+    }
+
+    private void portapapeles(Canvas c) {
+        float dy = 2f * (1f - anim);
+        trazo(1.7f);
+        rf.set(5f, 5f + dy, 19f, 21f);
+        c.drawRoundRect(rf, 2.2f, 2.2f, p);
+        relleno();
+        rf.set(8.7f, 2.8f + dy, 15.3f, 6.8f + dy);
+        c.drawRoundRect(rf, 1.4f, 1.4f, p);
+        trazo(1.6f);
+        p.setColor(conAlfa(color, 0.8f));
+        c.drawLine(8.5f, 11.5f + dy, 15.5f, 11.5f + dy, p);
+        c.drawLine(8.5f, 15f + dy, 13.5f, 15f + dy, p);
+    }
+
+    private void descarga(Canvas c) {
+        float rebote = activo ? 1.8f * (0.5f + 0.5f * seno()) : 0f;
+        trazo(2.2f);
+        p.setColor(color);
+        c.drawLine(12f, 3.5f + rebote, 12f, 14.5f + rebote, p);
+        path.reset();
+        path.moveTo(7f, 10f + rebote);
+        path.lineTo(12f, 15f + rebote);
+        path.lineTo(17f, 10f + rebote);
+        c.drawPath(path, p);
+        p.setColor(conAlfa(color, 0.7f));
+        c.drawLine(5f, 20.2f, 19f, 20.2f, p);
+    }
+
+    private void mensaje(Canvas c) {
+        float esc = 0.85f + 0.15f * anim;
+        c.save();
+        c.scale(esc, esc, 12f, 12f);
+        relleno();
+        p.setColor(color);
+        rf.set(3f, 4f, 21f, 17f);
+        c.drawRoundRect(rf, 4f, 4f, p);
+        path.reset();
+        path.moveTo(7f, 16f);
+        path.lineTo(7f, 21f);
+        path.lineTo(12.5f, 16.5f);
+        path.close();
+        c.drawPath(path, p);
+        p.setColor(0x66000000);
+        c.drawCircle(8f, 10.5f, 1.2f, p);
+        c.drawCircle(12f, 10.5f, 1.2f, p);
+        c.drawCircle(16f, 10.5f, 1.2f, p);
+        c.restore();
     }
 }
