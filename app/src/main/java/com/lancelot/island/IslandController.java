@@ -96,12 +96,16 @@ final class IslandController {
     private int expW;
     private int expTop;
     private boolean dividido;
+    /** Ventana de sistema por encima de la barra de estado (para poder tocar la isla). */
+    private static final int TIPO_SOBRE_BARRA = 2024; // TYPE_NAVIGATION_BAR_PANEL
+    private int tipoVentana = TIPO_SOBRE_BARRA;
 
     private FrameLayout root;
     private IslandView pill;
     private Evento actual;
     private Evento musica;
     private Evento llamada;
+    private Evento linterna;
     private final ArrayList<Evento> recientes = new ArrayList<>();
 
     private boolean shown;
@@ -213,6 +217,20 @@ final class IslandController {
         });
     }
 
+    /** Fija (o quita, con null) la linterna: queda la capsula mientras este encendida. */
+    void setLinterna(final Evento l, final boolean anunciar) {
+        h.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    fijar(Evento.LINTERNA, l, anunciar);
+                } catch (Throwable t) {
+                    XposedBridge.log(t);
+                }
+            }
+        });
+    }
+
     /** Actualiza el contenido si ya se muestra un evento igual (porcentaje de carga). */
     void actualizarMismoTipo(final Evento e) {
         h.post(new Runnable() {
@@ -250,12 +268,14 @@ final class IslandController {
 
     private Evento fijo() {
         if (llamada != null && cfg.fLlamada) return llamada;
+        if (linterna != null && cfg.fLinterna) return linterna;
         if (musica != null && !musicaSilenciada && cfg.fMusica) return musica;
         return null;
     }
 
     private boolean esFijo(Evento e) {
-        return e != null && (e.tipo == Evento.MUSICA || e.tipo == Evento.LLAMADA);
+        return e != null && (e.tipo == Evento.MUSICA || e.tipo == Evento.LLAMADA
+                || e.tipo == Evento.LINTERNA);
     }
 
     private boolean refrescarSiVisible(Evento e) {
@@ -411,6 +431,8 @@ final class IslandController {
         cfg = IslaConfig.get(ctx);
         if (tipo == Evento.MUSICA) {
             musica = m;
+        } else if (tipo == Evento.LINTERNA) {
+            linterna = m;
         } else {
             llamada = m;
         }
@@ -431,7 +453,11 @@ final class IslandController {
         }
 
         if (anunciar && tipo == Evento.MUSICA) musicaSilenciada = false;
-        if (tipo == Evento.MUSICA && (llamada != null && cfg.fLlamada)) return;
+        if (tipo == Evento.MUSICA && ((llamada != null && cfg.fLlamada)
+                || (linterna != null && cfg.fLinterna))) {
+            return;
+        }
+        if (tipo == Evento.LINTERNA && llamada != null && cfg.fLlamada) return;
         if (!cfg.enabled || !cfg.permite(tipo) || !pantallaOn || horizontalOculto()) return;
         if (tipo == Evento.MUSICA && musicaSilenciada) return;
 
@@ -441,8 +467,8 @@ final class IslandController {
             if (expanded && actual != null && actual.tipo == tipo && pill != null) {
                 actual = m;
                 pill.configurar(m, true, false);
-            } else if (anunciar && tipo == Evento.LLAMADA) {
-                // Una llamada entrante interrumpe lo que se este viendo
+            } else if (anunciar && (tipo == Evento.LLAMADA || tipo == Evento.LINTERNA)) {
+                // Una llamada o la linterna interrumpen lo que se este viendo
                 mostrarFijo(m, true);
             }
             return;
@@ -667,8 +693,8 @@ final class IslandController {
             return;
         }
         if (!expanded && esFijo(actual)) {
-            if (actual.tipo == Evento.LLAMADA) {
-                // La llamada en curso no se esconde: vuelve a su sitio
+            if (actual.tipo == Evento.LLAMADA || actual.tipo == Evento.LINTERNA) {
+                // La llamada y la linterna no se esconden mientras siguen activas
                 pill.animate().translationX(compTx).translationY(0f).setDuration(120).start();
                 return;
             }
@@ -732,7 +758,7 @@ final class IslandController {
             }
             return;
         }
-        if (a.tipo == Evento.LLAMADA) {
+        if (a.tipo == Evento.LLAMADA || a.tipo == Evento.LINTERNA) {
             if (!expanded) tocar();
             return;
         }
@@ -995,7 +1021,7 @@ final class IslandController {
         }
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 w, hh,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                tipoVentana,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
@@ -1042,7 +1068,7 @@ final class IslandController {
             @Override
             public void run() {
                 // Contestar o colgar: la notificacion de la llamada cambiara sola
-                if (actual != null && actual.tipo == Evento.LLAMADA) return;
+                if (esFijo(actual)) return;
                 descartar(0f, -dp(30));
             }
         });
@@ -1125,7 +1151,15 @@ final class IslandController {
         try {
             wm.addView(root, params(false));
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            // Algunas ROM no dejan ese tipo de ventana: se usa la de superposicion normal,
+            // que queda por debajo de la barra de estado (no se puede tocar en el notch)
+            XposedBridge.log("[IslaSystemUI] ventana sobre la barra no disponible: " + t);
+            tipoVentana = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+            try {
+                wm.addView(root, params(false));
+            } catch (Throwable t2) {
+                XposedBridge.log(t2);
+            }
         }
         pill.activarBlur();
         pill.setCorner(cornerPx);

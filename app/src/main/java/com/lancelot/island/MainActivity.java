@@ -285,7 +285,7 @@ public class MainActivity extends Activity {
 
         // ---- Estilo de la isla
         LinearLayout s = tarjeta(col, "Estilo de la isla");
-        segmentado(s, new String[]{"Hyper (sólida)", "Cristal (blur)"}, cfg.style,
+        segmentado(s, new String[]{"Hyper (aura)", "Cristal (vidrio)"}, cfg.style,
                 new IntSetter() {
             @Override
             public void set(int v) {
@@ -324,6 +324,13 @@ public class MainActivity extends Activity {
                 cfg.blurDp = v;
             }
         });
+        interruptor(s, "Luz interior (aura en Hyper, refracción en Cristal)", cfg.aura,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.aura = v == 1;
+                    }
+                });
         interruptor(s, "Ocultar la isla en horizontal", cfg.ocultarH, new IntSetter() {
             @Override
             public void set(int v) {
@@ -432,6 +439,22 @@ public class MainActivity extends Activity {
                         cfg.fPortapapeles = v == 1;
                     }
                 });
+
+        // ---- Linterna
+        LinearLayout li = tarjeta(col, "Linterna");
+        texto(li, "Al encenderla la isla se queda en el notch con un cronómetro; al apagarla "
+                + "se va. Tócala para expandirla y ver el botón Apagar.", 12, false, cSub);
+        seek(li, "Apagado automático", 0, 60, cfg.linternaAutoMin, new Etiqueta() {
+            @Override
+            public String de(int v) {
+                return v == 0 ? "nunca" : v + " min";
+            }
+        }, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.linternaAutoMin = v;
+            }
+        });
 
         // ---- Notificaciones: expandidas o minimizadas
         LinearLayout no = tarjeta(col, "Notificaciones");

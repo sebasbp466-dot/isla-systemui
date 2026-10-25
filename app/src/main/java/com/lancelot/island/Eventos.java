@@ -16,6 +16,7 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
+import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.media.AudioManager;
 import android.media.MediaMetadata;
@@ -63,6 +64,10 @@ final class Eventos {
     private static int ultimoNivel = -1;
     private static int ultimoModo = -1;
     private static Boolean ultimaLinterna;
+    private static String torchId;
+    private static long linternaBase;
+    private static int nivelLinterna = 1;
+    private static Runnable autoApagar;
     private static Boolean ultimoAvion;
     private static Boolean ultimoNoMolestar;
     private static Boolean ultimoAhorro;
@@ -139,7 +144,17 @@ final class Eventos {
             cm.registerTorchCallback(new CameraManager.TorchCallback() {
                 @Override
                 public void onTorchModeChanged(String cameraId, boolean enabled) {
+                    if (enabled) torchId = cameraId;
                     linterna(enabled);
+                }
+
+                @Override
+                public void onTorchStrengthLevelChanged(String cameraId, int nivel) {
+                    // La intensidad cambio (desde la isla o desde otro sitio)
+                    nivelLinterna = nivel;
+                    if (ultimaLinterna != null && ultimaLinterna) {
+                        isla().setLinterna(evLinterna(true), false);
+                    }
                 }
             }, h);
         } catch (Throwable t) {
@@ -384,6 +399,41 @@ final class Eventos {
 
     // ------------------------------------------------------------------ linterna, timbre, auriculares
 
+    /** Niveles de intensidad que admite el flash (1 si solo se enciende o apaga). */
+    private static int maxIntensidad() {
+        try {
+            if (torchId == null) return 1;
+            CameraManager cm = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
+            Integer mx = cm.getCameraCharacteristics(torchId).get(
+                    CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL);
+            return mx == null ? 1 : mx;
+        } catch (Throwable t) {
+            return 1;
+        }
+    }
+
+    private static void apagarLinterna() {
+        try {
+            if (torchId == null) return;
+            CameraManager cm = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
+            cm.setTorchMode(torchId, false);
+        } catch (Throwable t) {
+            XposedBridge.log(t);
+        }
+    }
+
+    private static void cambiarIntensidad() {
+        try {
+            int mx = maxIntensidad();
+            if (torchId == null || mx <= 1) return;
+            int siguiente = nivelLinterna % mx + 1;
+            CameraManager cm = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
+            cm.turnOnTorchWithStrengthLevel(torchId, siguiente);
+        } catch (Throwable t) {
+            XposedBridge.log(t);
+        }
+    }
+
     private static Evento evLinterna(boolean on) {
         Evento e = new Evento(Evento.LINTERNA);
         e.glifo = GlyphView.LINTERNA;
@@ -391,17 +441,82 @@ final class Eventos {
         e.color = 0xFFFFD60A;
         e.titulo = "Linterna";
         e.texto = on ? "Encendida" : "Apagada";
+        if (on) {
+            e.base = linternaBase > 0 ? linternaBase : SystemClock.elapsedRealtime();
+            int mx = maxIntensidad();
+            if (mx > 1) {
+                e.texto = "Encendida \u00B7 intensidad " + nivelLinterna + "/" + mx;
+                e.botonTxt = new String[]{"Apagar", "Intensidad"};
+                e.botonColor = new int[]{0xFFFF453A, 0x33FFFFFF};
+                e.botonRun = new Runnable[]{new Runnable() {
+                    @Override
+                    public void run() {
+                        apagarLinterna();
+                    }
+                }, new Runnable() {
+                    @Override
+                    public void run() {
+                        cambiarIntensidad();
+                    }
+                }};
+            } else {
+                e.botonTxt = new String[]{"Apagar"};
+                e.botonColor = new int[]{0xFFFF453A};
+                e.botonRun = new Runnable[]{new Runnable() {
+                    @Override
+                    public void run() {
+                        apagarLinterna();
+                    }
+                }};
+            }
+        }
         return e;
+    }
+
+    private static void programarAutoApagado() {
+        cancelarAutoApagado();
+        int min = IslaConfig.get(ctx).linternaAutoMin;
+        if (min <= 0) return;
+        autoApagar = new Runnable() {
+            @Override
+            public void run() {
+                apagarLinterna();
+            }
+        };
+        h.postDelayed(autoApagar, min * 60000L);
+    }
+
+    private static void cancelarAutoApagado() {
+        if (autoApagar != null) {
+            h.removeCallbacks(autoApagar);
+            autoApagar = null;
+        }
     }
 
     private static void linterna(boolean on) {
         if (SystemClock.uptimeMillis() < ignoraLinternaHasta) {
+            // Estado inicial al arrancar: si ya estaba encendida, la capsula queda sin anunciarse
             ultimaLinterna = on;
+            if (on) {
+                linternaBase = SystemClock.elapsedRealtime();
+                programarAutoApagado();
+                isla().setLinterna(evLinterna(true), false);
+            }
             return;
         }
         if (ultimaLinterna != null && ultimaLinterna == on) return;
         ultimaLinterna = on;
-        isla().show(evLinterna(on));
+        if (on) {
+            linternaBase = SystemClock.elapsedRealtime();
+            nivelLinterna = 1;
+            programarAutoApagado();
+            // La capsula se queda mientras este encendida
+            isla().setLinterna(evLinterna(true), true);
+        } else {
+            cancelarAutoApagado();
+            isla().setLinterna(null, false);
+            isla().show(evLinterna(false));
+        }
     }
 
     private static Evento evTimbre(int modo) {
@@ -840,9 +955,11 @@ final class Eventos {
                         break;
                     }
                     case 2:
-                        isla().show(evLinterna(true));
+                        linternaBase = SystemClock.elapsedRealtime();
+                        isla().setLinterna(evLinterna(true), true);
                         break;
                     case 3:
+                        isla().setLinterna(null, false);
                         isla().show(evLinterna(false));
                         break;
                     case 4: {

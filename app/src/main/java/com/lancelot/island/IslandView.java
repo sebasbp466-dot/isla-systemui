@@ -84,6 +84,8 @@ final class IslandView extends LinearLayout {
 
     private ValueAnimator contador;
     private ValueAnimator luzAnim;
+    private ValueAnimator auraAnim;
+    private int auraColor;
     private Evento ev;
     private boolean expandido;
     private String ultTitulo;
@@ -123,9 +125,10 @@ final class IslandView extends LinearLayout {
         iconoFrame.setOutlineProvider(new ViewOutlineProvider() {
             @Override
             public void getOutline(View view, Outline outline) {
-                // Esquinas a un cuarto del tamaño, como en la especificacion de Xiaomi
+                // Hyper: esquinas a un cuarto del tamaño (especificacion de Xiaomi).
+                // Cristal: circulo, como una lente.
                 outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(),
-                        view.getWidth() / 4f);
+                        view.getWidth() / (cfg.style == 1 ? 2f : 4f));
             }
         });
         glifo = new GlyphView(ctx);
@@ -143,7 +146,8 @@ final class IslandView extends LinearLayout {
 
         titulo = new TextView(ctx);
         titulo.setTextColor(cfg.titleColor);
-        titulo.setTypeface(Typeface.DEFAULT_BOLD);
+        titulo.setTypeface(Typeface.create(cfg.style == 1 ? "sans-serif" : "sans-serif-medium",
+                Typeface.BOLD));
         titulo.setSingleLine(true);
         titulo.setEllipsize(TextUtils.TruncateAt.END);
         titulo.setMarqueeRepeatLimit(1);
@@ -161,13 +165,15 @@ final class IslandView extends LinearLayout {
         ecual = new EqualizerView(ctx);
         derecha.addView(ecual, new FrameLayout.LayoutParams(dp(18), dp(14), Gravity.CENTER));
         valor = new TextView(ctx);
-        valor.setTypeface(Typeface.DEFAULT_BOLD);
+        valor.setTypeface(Typeface.create(cfg.style == 1 ? "sans-serif-light"
+                : "sans-serif-condensed", Typeface.BOLD));
         valor.setSingleLine(true);
         derecha.addView(valor, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER));
         crono = new Chronometer(ctx);
-        crono.setTypeface(Typeface.DEFAULT_BOLD);
+        crono.setTypeface(Typeface.create(cfg.style == 1 ? "sans-serif-light"
+                : "sans-serif-condensed", Typeface.BOLD));
         crono.setSingleLine(true);
         derecha.addView(crono, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -394,17 +400,20 @@ final class IslandView extends LinearLayout {
                 // Gira una vuelta y media; aparece rapido y se apaga al final
                 float alfa = f < 0.15f ? f / 0.15f : (f > 0.7f ? (1f - f) / 0.3f : 1f);
                 fondo.setLuz(color, 540f * f, alfa);
+                if (cfg.style == 1) fondo.setReflejo(f < 0.65f ? f / 0.65f : -1f);
             }
         });
         luzAnim.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(android.animation.Animator animation) {
                 fondo.setLuz(0, 0f, 0f);
+                fondo.setReflejo(-1f);
             }
 
             @Override
             public void onAnimationCancel(android.animation.Animator animation) {
                 fondo.setLuz(0, 0f, 0f);
+                fondo.setReflejo(-1f);
             }
         });
         luzAnim.start();
@@ -413,6 +422,10 @@ final class IslandView extends LinearLayout {
     @Override
     protected void onDetachedFromWindow() {
         if (luzAnim != null) luzAnim.cancel();
+        if (auraAnim != null) {
+            auraAnim.cancel();
+            auraAnim = null;
+        }
         if (contador != null) contador.cancel();
         crono.stop();
         super.onDetachedFromWindow();
@@ -441,6 +454,7 @@ final class IslandView extends LinearLayout {
         }
 
         if (e == null) {
+            actualizarAura(null, ex);
             iconoFrame.setVisibility(GONE);
             textos.setVisibility(GONE);
             hueco.setVisibility(GONE);
@@ -448,6 +462,8 @@ final class IslandView extends LinearLayout {
             inferior.setVisibility(GONE);
             return;
         }
+
+        actualizarAura(e, ex);
 
         // ---- icono o glifo
         boolean usaGlifo = e.glifo != 0 || (e.icono == null && e.tipo == Evento.MUSICA);
@@ -527,7 +543,8 @@ final class IslandView extends LinearLayout {
             elp.width = ex ? dp(24) : dp(18);
             elp.height = ex ? dp(20) : dp(14);
             ecual.setLayoutParams(elp);
-        } else if (e.tipo == Evento.LLAMADA && e.sub == 2 && e.base > 0) {
+        } else if ((e.tipo == Evento.LLAMADA && e.sub == 2 && e.base > 0)
+                || (e.tipo == Evento.LINTERNA && e.activo && e.base > 0)) {
             derecha.setVisibility(VISIBLE);
             crono.setVisibility(VISIBLE);
             crono.setTextColor(e.color);
@@ -640,6 +657,55 @@ final class IslandView extends LinearLayout {
         }
     }
 
+    /**
+     * Luz interior del evento. Los eventos activos (musica sonando, carga, linterna, llamada)
+     * la hacen respirar; los demas la muestran fija mientras estan expandidos.
+     */
+    private void actualizarAura(Evento e, boolean ex) {
+        boolean fija = e != null && cfg.aura
+                && ((ex && e.tipo != Evento.MUSICA) || (ex && e.reproduciendo));
+        boolean respira = e != null && cfg.aura
+                && (e.activo || (e.tipo == Evento.MUSICA && e.reproduciendo))
+                && e.tipo != Evento.NOTIF;
+        if (e == null || !cfg.aura || (!fija && !respira)) {
+            if (auraAnim != null) {
+                auraAnim.cancel();
+                auraAnim = null;
+            }
+            fondo.setAura(0, 0f);
+            return;
+        }
+        auraColor = e.color;
+        if (!respira) {
+            if (auraAnim != null) {
+                auraAnim.cancel();
+                auraAnim = null;
+            }
+            fondo.setAura(auraColor, 0.55f);
+            return;
+        }
+        fondo.setAura(auraColor, 0.8f);
+        if (auraAnim != null || !isAttachedToWindow()) return;
+        auraAnim = ValueAnimator.ofFloat(0f, 1f);
+        auraAnim.setDuration(2600);
+        auraAnim.setRepeatMode(ValueAnimator.REVERSE);
+        auraAnim.setRepeatCount(ValueAnimator.INFINITE);
+        auraAnim.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+        auraAnim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator a) {
+                fondo.setAura(auraColor, 0.45f + 0.55f * (Float) a.getAnimatedValue());
+            }
+        });
+        auraAnim.start();
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (ev != null) actualizarAura(ev, expandido);
+    }
+
     /** Todo en su sitio, sin restos de una animacion cortada a medias. */
     private void reposo() {
         View[] vs = {iconoFrame, titulo, cuerpo, derecha, inferior};
@@ -704,8 +770,10 @@ final class IslandView extends LinearLayout {
             GradientDrawable fondo = new GradientDrawable();
             int col = e.botonColor != null && i < e.botonColor.length ? e.botonColor[i]
                     : 0x33FFFFFF;
+            if (col == 0x33FFFFFF && cfg.style == 0) col = 0xFF2A2A2F;
             fondo.setColor(col);
             fondo.setCornerRadius(dp(18));
+            if (cfg.style == 1) fondo.setStroke(Math.max(1, dp(1)), 0x55FFFFFF);
             t.setBackground(fondo);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
                     LayoutParams.MATCH_PARENT, 1f);
