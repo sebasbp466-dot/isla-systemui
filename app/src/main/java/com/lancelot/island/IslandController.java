@@ -363,11 +363,23 @@ final class IslandController {
     }
 
     /** Una notificacion llega minimizada segun el modo elegido, la app y lo ocupada que este la isla. */
+    private boolean enNoMolestar() {
+        try {
+            android.app.NotificationManager nm = (android.app.NotificationManager)
+                    ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            return nm != null && nm.getCurrentInterruptionFilter()
+                    > android.app.NotificationManager.INTERRUPTION_FILTER_ALL;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private boolean decidirMinimizada(Evento e) {
         if (e.minimizada) return true;
         if (e.tipo != Evento.NOTIF) return false;
         if (e.pkg != null && cfg.isMin(e.pkg)) return true;
         if (cfg.notifMode == 1) return true;
+        if (cfg.noMolestarMin && enNoMolestar()) return true;
         if (cfg.notifMode == 0) return false;
         boolean ocupada = fijo() != null || (shown && transitorio);
         boolean rafaga = ultimaNotif != 0

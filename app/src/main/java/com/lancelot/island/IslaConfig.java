@@ -70,6 +70,10 @@ final class IslaConfig {
     boolean fVolumen = false;
     boolean fPortapapeles = false;
     boolean fCrono = true;
+    /** Luz de progreso que recorre el borde (carga, descargas, volumen). */
+    boolean progBorde = true;
+    /** Con No molestar activo, las notificaciones llegan minimizadas. */
+    boolean noMolestarMin = true;
 
     private static volatile IslaConfig cache;
     private static boolean observando;
@@ -268,6 +272,12 @@ final class IslaConfig {
                     case "xp":
                         fPortapapeles = "1".equals(v);
                         break;
+                    case "bp":
+                        progBorde = "1".equals(v);
+                        break;
+                    case "nd":
+                        noMolestarMin = "1".equals(v);
+                        break;
                     case "xr":
                         fCrono = "1".equals(v);
                         break;
@@ -318,6 +328,8 @@ final class IslaConfig {
                 + ";xv=" + b(fVolumen)
                 + ";xp=" + b(fPortapapeles)
                 + ";xr=" + b(fCrono)
+                + ";bp=" + b(progBorde)
+                + ";nd=" + b(noMolestarMin)
                 + ";bl=" + limpiar(blocked);
     }
 

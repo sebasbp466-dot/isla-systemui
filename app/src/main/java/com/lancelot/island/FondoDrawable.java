@@ -6,6 +6,7 @@ import android.graphics.LinearGradient;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PathMeasure;
 import android.graphics.PixelFormat;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
@@ -66,6 +67,15 @@ final class FondoDrawable extends Drawable {
 
     private float auraNivel;
     private int neonColor = 0xFFFFFFFF;
+    private float progreso = -1f;
+    private int progresoColor = 0xFFFFFFFF;
+    private final Paint progP = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path progPath = new Path();
+    private final Path progSeg = new Path();
+    private float progW;
+    private float progH;
+    private float progR;
+    private float progLen;
     private float reflejoPos = -1f;
 
     FondoDrawable(int estilo, int color, float density) {
@@ -118,6 +128,13 @@ final class FondoDrawable extends Drawable {
         sombra.setShader(degradado);
         reborde.setShader(rebordeG);
         if (reflejoG != null) reflejoP.setShader(reflejoG);
+    }
+
+    /** Luz que recorre el borde segun el avance (carga, descarga, volumen). p < 0 la apaga. */
+    void setProgreso(int c, float p) {
+        progreso = p < 0f ? -1f : Math.min(1f, p);
+        progresoColor = c;
+        invalidateSelf();
     }
 
     void setRadio(float px) {
@@ -311,6 +328,33 @@ final class FondoDrawable extends Drawable {
             filoG.setLocalMatrix(m);
             filoP.setAlpha(Math.round(190f * auraNivel));
             c.drawRoundRect(rf, rf2, rf2, filoP);
+        }
+
+        // Progreso en el borde
+        if (progreso >= 0f) {
+            float pm = density * 1.6f;
+            if (w != progW || h != progH || r != progR) {
+                progW = w;
+                progH = h;
+                progR = r;
+                rf.set(b.left + pm, b.top + pm, b.right - pm, b.bottom - pm);
+                float pr = Math.max(0f, r - pm);
+                progPath.reset();
+                progPath.addRoundRect(rf, pr, pr, Path.Direction.CW);
+                progLen = new PathMeasure(progPath, false).getLength();
+            }
+            progP.setStyle(Paint.Style.STROKE);
+            progP.setStrokeCap(Paint.Cap.ROUND);
+            progP.setStrokeWidth(density * 2.6f);
+            progP.setColor(progresoColor);
+            progP.setAlpha(45);
+            c.drawPath(progPath, progP);
+            if (progreso > 0f) {
+                progSeg.reset();
+                new PathMeasure(progPath, false).getSegment(0f, progLen * progreso, progSeg, true);
+                progP.setAlpha(235);
+                c.drawPath(progSeg, progP);
+            }
         }
 
         // Cometa de luz del evento

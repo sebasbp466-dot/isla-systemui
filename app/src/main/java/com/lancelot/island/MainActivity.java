@@ -233,7 +233,18 @@ public class MainActivity extends Activity {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(dp(16), dp(12), dp(16), dp(32));
         scroll.addView(col);
-        setContentView(scroll);
+        if (vidrio) {
+            FrameLayout raiz = new FrameLayout(this);
+            raiz.addView(new AuroraView(this), new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+            raiz.addView(scroll, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+            setContentView(raiz);
+        } else {
+            setContentView(scroll);
+        }
 
         TextView titulo = texto(col, "Isla SystemUI", 30, true, cText);
         titulo.setPadding(dp(4), dp(8), 0, 0);
@@ -283,6 +294,15 @@ public class MainActivity extends Activity {
             }
         });
 
+        // ---- Temas rápidos
+        LinearLayout tr = tarjeta(col, "Temas rápidos");
+        texto(tr, "Un toque cambia estilo y colores de golpe. Luego puedes afinar todo.", 12,
+                false, cSub);
+        filaTemas(tr, "Medianoche", new int[]{0, 0xFF000000, 0xFFFFFFFF, 0xFFCCCCCC, 32},
+                "Cristal azul", new int[]{1, 0xFF0B1B3A, 0xFFFFFFFF, 0xFFD6E4FF, 32});
+        filaTemas(tr, "Neón", new int[]{2, 0xFF000000, 0xFFFFFFFF, 0xFFBFBFC8, 30},
+                "Fresa", new int[]{1, 0xFF2B0A1A, 0xFFFFE3F0, 0xFFFFB3D1, 34});
+
         // ---- Estilo de la isla
         LinearLayout s = tarjeta(col, "Estilo de la isla");
         segmentado(s, new String[]{"Hyper", "Cristal", "Neón"}, cfg.style,
@@ -329,6 +349,21 @@ public class MainActivity extends Activity {
                     @Override
                     public void set(int v) {
                         cfg.aura = v == 1;
+                    }
+                });
+        interruptor(s, "Luz de progreso en el borde (carga, descargas)", cfg.progBorde,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.progBorde = v == 1;
+                        refrescar();
+                    }
+                });
+        interruptor(s, "Con No molestar, notificaciones minimizadas", cfg.noMolestarMin,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.noMolestarMin = v == 1;
                     }
                 });
         interruptor(s, "Ocultar la isla en horizontal", cfg.ocultarH, new IntSetter() {
@@ -648,6 +683,34 @@ public class MainActivity extends Activity {
                 probarEvento(9);
             }
         });
+        boton(ac, "Copiar mis ajustes", TON, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                        getSystemService(CLIPBOARD_SERVICE);
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("isla", cfg.serialize()));
+                Toast.makeText(MainActivity.this, "Ajustes copiados", Toast.LENGTH_SHORT).show();
+            }
+        });
+        boton(ac, "Pegar ajustes copiados", TON, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                            getSystemService(CLIPBOARD_SERVICE);
+                    CharSequence t = cm.getPrimaryClip().getItemAt(0).getText();
+                    IslaConfig n = new IslaConfig();
+                    n.parse(String.valueOf(t));
+                    cfg = n;
+                    reconstruir();
+                    Toast.makeText(MainActivity.this, "Ajustes pegados; pulsa Guardar",
+                            Toast.LENGTH_SHORT).show();
+                } catch (Throwable x) {
+                    Toast.makeText(MainActivity.this, "No hay ajustes copiados",
+                            Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
         boton(ac, "Restablecer valores", CON, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -814,6 +877,43 @@ public class MainActivity extends Activity {
     }
 
     /** Dos botones de prueba en una fila. */
+    private void filaTemas(LinearLayout col, String a, final int[] ta, String b,
+                           final int[] tb) {
+        LinearLayout fila = new LinearLayout(this);
+        fila.setOrientation(LinearLayout.HORIZONTAL);
+        col.addView(fila, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        boton(fila, a, TON, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                aplicarTemaIsla(ta);
+            }
+        });
+        boton(fila, b, TON, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                aplicarTemaIsla(tb);
+            }
+        });
+        for (int i = 0; i < fila.getChildCount(); i++) {
+            LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams)
+                    fila.getChildAt(i).getLayoutParams();
+            lp.width = 0;
+            lp.weight = 1f;
+            if (i > 0) lp.setMarginStart(dp(8));
+            fila.getChildAt(i).setLayoutParams(lp);
+        }
+    }
+
+    private void aplicarTemaIsla(int[] t) {
+        cfg.style = t[0];
+        cfg.bgColor = t[1];
+        cfg.titleColor = t[2];
+        cfg.bodyColor = t[3];
+        cfg.radiusDp = t[4];
+        reconstruir();
+    }
+
     private void filaPrueba(LinearLayout col, String a, final int tipoA, String b,
                             final int tipoB) {
         LinearLayout fila = new LinearLayout(this);

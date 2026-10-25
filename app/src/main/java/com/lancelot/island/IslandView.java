@@ -481,6 +481,7 @@ final class IslandView extends LinearLayout {
 
         if (e == null) {
             actualizarAura(null, ex);
+            fondo.setProgreso(0, -1f);
             iconoFrame.setVisibility(GONE);
             textos.setVisibility(GONE);
             hueco.setVisibility(GONE);
@@ -630,6 +631,10 @@ final class IslandView extends LinearLayout {
             valor.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
             valor.setText("●");
         }
+
+        boolean conBorde = cfg.progBorde && (e.tipo == Evento.CARGA || e.tipo == Evento.PROGRESO
+                || e.tipo == Evento.VOLUMEN) && e.nivel >= 0;
+        fondo.setProgreso(e.color, conBorde ? e.nivel / 100f : -1f);
 
         // ---- parte inferior
         boolean conBotones = ex && e.botonTxt != null && e.botonTxt.length > 0;
