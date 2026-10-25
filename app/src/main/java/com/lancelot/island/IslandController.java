@@ -317,7 +317,7 @@ final class IslandController {
 
     private void mostrar(Evento e) {
         cfg = IslaConfig.get(ctx);
-        if (!cfg.enabled || !cfg.permite(e.tipo) || !pantallaOn) return;
+        if (!cfg.enabled || !cfg.permite(e.tipo) || !pantallaOn || horizontalOculto()) return;
 
         // El volumen se actualiza en el sitio mientras sigues pulsando los botones
         if (e.tipo == Evento.VOLUMEN && shown && actual != null && actual.tipo == Evento.VOLUMEN
@@ -343,6 +343,13 @@ final class IslandController {
         transitorio = true;
         actual = e;
         e.minimizada = min;
+        if (e.tipo == Evento.NOTIF) {
+            int n = 0;
+            for (Evento r : recientes) {
+                if (r.tipo == Evento.NOTIF) n++;
+            }
+            e.contador = n;
+        }
 
         if (shown && pill != null) {
             pill.setAlpha(1f);
@@ -386,6 +393,15 @@ final class IslandController {
         }
     }
 
+    private boolean horizontalOculto() {
+        try {
+            return cfg.ocultarH && ctx.getResources().getConfiguration().orientation
+                    == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private int minimaMs() {
         return Math.max(MINIMA_MS, cfg.durationMs - 600);
     }
@@ -416,7 +432,7 @@ final class IslandController {
 
         if (anunciar && tipo == Evento.MUSICA) musicaSilenciada = false;
         if (tipo == Evento.MUSICA && (llamada != null && cfg.fLlamada)) return;
-        if (!cfg.enabled || !cfg.permite(tipo) || !pantallaOn) return;
+        if (!cfg.enabled || !cfg.permite(tipo) || !pantallaOn || horizontalOculto()) return;
         if (tipo == Evento.MUSICA && musicaSilenciada) return;
 
         if (transitorio) {
@@ -461,11 +477,12 @@ final class IslandController {
 
     private void anunciarFijo() {
         transitorio = true;
-        cancelarPasos();
+        // Solo los temporizadores: la animacion de entrada que este en marcha sigue su curso
+        h.removeCallbacksAndMessages(null);
+        colapsoPend = null;
+        gen++;
         final int g = gen;
         if (pill != null) {
-            pill.setTranslationY(0f);
-            pill.setAlpha(1f);
             pill.destello(actual != null ? actual.color : 0xFFFFFFFF);
         }
         h.postDelayed(new Runnable() {
@@ -556,6 +573,24 @@ final class IslandController {
             }
         };
         h.postDelayed(colapsoPend, ms);
+        // Seguro: si el cierre normal no ocurrio, se fuerza para que nada se quede pegado
+        h.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (g != gen || !shown || pill == null) return;
+                XposedBridge.log("[IslaSystemUI] cierre forzado (tipo="
+                        + (actual != null ? actual.tipo : -1) + ")");
+                cancelarPasos();
+                if (expanded) {
+                    colapsar(gen);
+                } else if (esFijo(actual)) {
+                    despuesDeColapsar(gen, 0);
+                } else {
+                    quitar();
+                    restaurarFijo();
+                }
+            }
+        }, ms + 6000L);
     }
 
     private void pausarColapso() {
@@ -1026,6 +1061,8 @@ final class IslandController {
                         largoHecho = false;
                         pausarColapso();
                         h.postDelayed(largoRun, LARGO_MS);
+                        pill.animate().scaleX(0.965f).scaleY(0.965f).setDuration(90)
+                                .setInterpolator(new DecelerateInterpolator()).start();
                         return true;
                     case MotionEvent.ACTION_MOVE:
                         if (!moviendo && (Math.abs(dx) > dp(8) || Math.abs(dy) > dp(8))) {
@@ -1044,6 +1081,7 @@ final class IslandController {
                         return true;
                     case MotionEvent.ACTION_UP:
                         h.removeCallbacks(largoRun);
+                        soltar();
                         if (largoHecho) {
                             reanudarColapso();
                             return true;
@@ -1066,6 +1104,7 @@ final class IslandController {
                         return true;
                     case MotionEvent.ACTION_CANCEL:
                         h.removeCallbacks(largoRun);
+                        soltar();
                         volverASitio();
                         return true;
                     default:
@@ -1088,8 +1127,19 @@ final class IslandController {
         } catch (Throwable t) {
             XposedBridge.log(t);
         }
+        pill.activarBlur();
+        pill.setCorner(cornerPx);
         XposedBridge.log("[IslaSystemUI] ventana anadida (notch=" + cutW + "px, barra=" + sbPx
-                + "px)");
+                + "px, blur=" + pill.estadoBlur() + ")");
+    }
+
+    /** Al soltar, la isla recupera su tamaño con un pequeño rebote (como al pulsar en iOS). */
+    private void soltar() {
+        if (pill == null) return;
+        pill.animate().scaleX(1f).scaleY(1f).setDuration(cfg.ms(340))
+                .setInterpolator(cfg.animStyle == 0 ? new DecelerateInterpolator()
+                        : new Muelle(6f, 1.4f))
+                .start();
     }
 
     /** Suelta sin gesto valido: vuelve a su sitio con un pequeño rebote. */
@@ -1165,7 +1215,14 @@ final class IslandController {
             sizeAnim.cancel();
             sizeAnim = null;
         }
-        if (pill != null) pill.animate().cancel();
+        if (pill != null) {
+            // Una animacion cortada a medias no puede dejar la isla pequeña o transparente
+            pill.animate().cancel();
+            pill.setAlpha(1f);
+            pill.setScaleX(1f);
+            pill.setScaleY(1f);
+            pill.setTranslationY(0f);
+        }
     }
 
     private int dp(float v) {

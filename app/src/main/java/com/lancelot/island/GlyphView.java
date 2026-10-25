@@ -41,6 +41,9 @@ final class GlyphView extends View {
     static final int DESCARGA = 20;
     static final int COLGAR = 21;
     static final int MENSAJE = 22;
+    static final int WIFI = 23;
+    static final int BLUETOOTH = 24;
+    static final int UBICACION = 25;
 
     private static final int AMARILLO = 0xFFFFD60A;
     private static final int VERDE = 0xFF34C759;
@@ -97,7 +100,8 @@ final class GlyphView extends View {
         animEntrada.start();
 
         boolean pulsa = activo && (tipo == LINTERNA || tipo == BATERIA || tipo == RAYO
-                || tipo == TELEFONO || tipo == CAMARA || tipo == MICROFONO || tipo == DESCARGA);
+                || tipo == TELEFONO || tipo == CAMARA || tipo == MICROFONO || tipo == DESCARGA
+                || tipo == UBICACION);
         if (pulsa) {
             animPulso = ValueAnimator.ofFloat(0f, 1f);
             animPulso.setDuration(1100);
@@ -142,6 +146,7 @@ final class GlyphView extends View {
         c.save();
         c.translate((getWidth() - 24f * s) / 2f, (getHeight() - 24f * s) / 2f);
         c.scale(s, s);
+        ondas(c);
         switch (tipo) {
             case LINTERNA:
                 linterna(c);
@@ -196,6 +201,15 @@ final class GlyphView extends View {
                 break;
             case MENSAJE:
                 mensaje(c);
+                break;
+            case WIFI:
+                wifi(c);
+                break;
+            case BLUETOOTH:
+                bluetooth(c);
+                break;
+            case UBICACION:
+                ubicacion(c);
                 break;
             case PLAY:
                 relleno();
@@ -671,6 +685,81 @@ final class GlyphView extends View {
         c.drawCircle(8f, 10.5f, 1.2f, p);
         c.drawCircle(12f, 10.5f, 1.2f, p);
         c.drawCircle(16f, 10.5f, 1.2f, p);
+        c.restore();
+    }
+
+    // ------------------------------------------------------------------ ondas y mas iconos
+
+    /** Ondas que se expanden desde el icono mientras esta activo (linterna, llamada, camara...). */
+    private void ondas(Canvas c) {
+        if (!activo || animPulso == null) return;
+        boolean ok = tipo == LINTERNA || tipo == BATERIA || tipo == CAMARA || tipo == MICROFONO
+                || tipo == UBICACION || (tipo == TELEFONO && modo == 1);
+        if (!ok) return;
+        int col = tipo == LINTERNA ? AMARILLO : (tipo == BATERIA ? VERDE : color);
+        for (int k = 0; k < 2; k++) {
+            float f = (pulso + k * 0.5f) % 1f;
+            trazo(1.1f);
+            p.setColor(conAlfa(col, 0.38f * (1f - f)));
+            c.drawCircle(12f, 12f, 6.5f + 5.5f * f, p);
+        }
+    }
+
+    private void wifi(Canvas c) {
+        float a = anim;
+        trazo(2f);
+        p.setColor(color);
+        float[] r = {4f, 7.5f, 11f};
+        for (int i = 0; i < 3; i++) {
+            float alfa = Math.max(0f, Math.min(1f, a * 3f - (2 - i)));
+            p.setAlpha(Math.round(255f * (activo ? alfa : 0.35f + 0.65f * alfa)));
+            rf.set(12f - r[i], 19f - r[i], 12f + r[i], 19f + r[i]);
+            c.drawArc(rf, 225f, 90f, false, p);
+        }
+        relleno();
+        p.setColor(color);
+        c.drawCircle(12f, 18.2f, 1.5f, p);
+        if (!activo) {
+            trazo(2f);
+            p.setColor(ROJO);
+            c.drawLine(4.5f, 4.5f, 19.5f, 19.5f, p);
+        }
+    }
+
+    private void bluetooth(Canvas c) {
+        float esc = 0.8f + 0.2f * anim;
+        c.save();
+        c.scale(esc, esc, 12f, 12f);
+        trazo(2f);
+        p.setColor(color);
+        path.reset();
+        path.moveTo(7f, 8f);
+        path.lineTo(17f, 16f);
+        path.lineTo(12f, 21f);
+        path.lineTo(12f, 3f);
+        path.lineTo(17f, 8f);
+        path.lineTo(7f, 16f);
+        c.drawPath(path, p);
+        c.restore();
+    }
+
+    private void ubicacion(Canvas c) {
+        float rebote = (float) Math.abs(Math.sin(anim * Math.PI * 2.0)) * 2f * (1f - anim);
+        c.save();
+        c.translate(0f, -rebote);
+        relleno();
+        p.setColor(color);
+        path.reset();
+        path.addCircle(12f, 9.5f, 6.3f, Path.Direction.CW);
+        c.drawPath(path, p);
+        path.reset();
+        path.moveTo(6.4f, 12.2f);
+        path.lineTo(12f, 21.5f);
+        path.lineTo(17.6f, 12.2f);
+        path.close();
+        c.drawPath(path, p);
+        p.setColor(0xCC000000);
+        c.drawCircle(12f, 9.5f, 2.4f, p);
         c.restore();
     }
 }

@@ -72,6 +72,7 @@ public class MainActivity extends Activity {
     private int cPage;
     private int cCard;
 
+    private boolean entrada = true;
     private ScrollView scroll;
     private FrameLayout vista;
     private TextView estado;
@@ -121,8 +122,11 @@ public class MainActivity extends Activity {
             cCard = 0x2EFFFFFF;
             barraArriba = 0xFF1B2A6B;
             barraAbajo = 0xFF0E7C86;
-            getWindow().setBackgroundDrawable(paginaVidrio());
+            boolean blur = blurVentana();
+            getWindow().setBackgroundDrawable(paginaVidrio(blur ? 0x99 : 0xEE));
+            setBlurVentana(blur ? 48 : 0);
         } else {
+            setBlurVentana(0);
             if (noche) {
                 cText = sys(android.R.color.system_neutral1_100, 0xFFE6E1E5);
                 cSub = sys(android.R.color.system_neutral2_200, 0xFFCAC4D0);
@@ -158,9 +162,31 @@ public class MainActivity extends Activity {
         }
     }
 
-    private Drawable paginaVidrio() {
+    /** true si el sistema permite desenfocar lo que hay detras de la ventana. */
+    private boolean blurVentana() {
+        try {
+            return Build.VERSION.SDK_INT >= 31 && getWindowManager().isCrossWindowBlurEnabled();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private void setBlurVentana(int dpRadio) {
+        try {
+            if (Build.VERSION.SDK_INT >= 31) getWindow().setBackgroundBlurRadius(dp(dpRadio));
+        } catch (Throwable ignorado) {
+            // sin desenfoque: queda el degradado
+        }
+    }
+
+    private static int conAlfa(int color, int alfa) {
+        return (color & 0x00FFFFFF) | (alfa << 24);
+    }
+
+    private Drawable paginaVidrio(int alfa) {
         GradientDrawable lin = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{0xFF1B2A6B, 0xFF5B2A86, 0xFF0E7C86});
+                new int[]{conAlfa(0xFF1B2A6B, alfa), conAlfa(0xFF5B2A86, alfa),
+                        conAlfa(0xFF0E7C86, alfa)});
         Drawable b1 = brillo(0.15f, 0.12f, 380, 0x66FFFFFF, 0x00FFFFFF);
         Drawable b2 = brillo(0.90f, 0.62f, 320, 0x5500E5FF, 0x0000E5FF);
         Drawable b3 = brillo(0.20f, 0.95f, 300, 0x55FF4DA6, 0x00FF4DA6);
@@ -185,16 +211,11 @@ public class MainActivity extends Activity {
         return g;
     }
 
-    /** Cristal: relleno translucido con borde claro y un brillo de arriba hacia abajo. */
+    /** Cristal: tinte translucido, brillo en diagonal y borde de luz que se apaga por los lados. */
     private Drawable cristal(int relleno, int borde, int brilloArriba, float radioPx) {
-        GradientDrawable base = new GradientDrawable();
-        base.setColor(relleno);
-        base.setCornerRadius(radioPx);
-        base.setStroke(Math.max(1, dp(1)), borde);
-        GradientDrawable shine = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{brilloArriba, 0x00FFFFFF});
-        shine.setCornerRadius(radioPx);
-        return new LayerDrawable(new Drawable[]{base, shine});
+        FondoDrawable f = new FondoDrawable(1, relleno, d);
+        f.setRadio(radioPx);
+        return f;
     }
 
     // ------------------------------------------------------------------ interfaz
@@ -255,10 +276,17 @@ public class MainActivity extends Activity {
         p.addView(vista, vlp);
         refrescar();
         texto(p, "Arriba: expandida. Abajo: compacta con hueco para la cámara.", 12, false, cSub);
+        boton(p, "Ver la animación", TON, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                refrescar(true);
+            }
+        });
 
         // ---- Estilo de la isla
         LinearLayout s = tarjeta(col, "Estilo de la isla");
-        segmentado(s, new String[]{"Hyper (sólida)", "Cristal"}, cfg.style, new IntSetter() {
+        segmentado(s, new String[]{"Hyper (sólida)", "Cristal (blur)"}, cfg.style,
+                new IntSetter() {
             @Override
             public void set(int v) {
                 cfg.style = v;
@@ -290,7 +318,19 @@ public class MainActivity extends Activity {
                 cfg.speed = v;
             }
         });
-        interruptor(s, "Aro de luz al llegar un evento", cfg.glow, new IntSetter() {
+        seek(s, "Desenfoque del cristal", 0, 60, cfg.blurDp, dpTxt(), new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.blurDp = v;
+            }
+        });
+        interruptor(s, "Ocultar la isla en horizontal", cfg.ocultarH, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.ocultarH = v == 1;
+            }
+        });
+        interruptor(s, "Luz giratoria en el borde al llegar un evento", cfg.glow, new IntSetter() {
             @Override
             public void set(int v) {
                 cfg.glow = v == 1;
@@ -562,6 +602,8 @@ public class MainActivity extends Activity {
         filaPrueba(pr, "Cámara", 14, "Micrófono", 15);
         filaPrueba(pr, "Modo avión", 16, "No molestar", 17);
         filaPrueba(pr, "Ahorro de batería", 18, "Portapapeles", 22);
+        filaPrueba(pr, "Wi-Fi", 23, "Bluetooth", 24);
+        filaPrueba(pr, "Batería caliente", 25, "Carga rápida", 26);
         boton(pr, "Quitar la llamada de prueba", CON, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -589,9 +631,26 @@ public class MainActivity extends Activity {
                 scroll.scrollTo(0, scrollY);
             }
         });
+        if (entrada) {
+            entrada = false;
+            // Las tarjetas suben una tras otra con un pequeño rebote
+            for (int i = 0; i < col.getChildCount(); i++) {
+                View v = col.getChildAt(i);
+                v.setAlpha(0f);
+                v.setTranslationY(dp(36));
+                v.animate().alpha(1f).translationY(0f).setStartDelay(60L + 55L * Math.min(i, 8))
+                        .setDuration(520)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(0.9f))
+                        .start();
+            }
+        }
     }
 
     private void refrescar() {
+        refrescar(false);
+    }
+
+    private void refrescar(boolean animar) {
         if (vista == null) return;
         vista.removeAllViews();
 
@@ -602,7 +661,8 @@ public class MainActivity extends Activity {
 
         int h1 = dp(IslandView.alturaDp(cfg, muestra));
         IslandView grande = new IslandView(this, cfg, 0);
-        grande.configurar(muestra, true, false);
+        grande.configurar(muestra, true, animar);
+        if (animar) grande.destello(0xFF0A84FF);
         grande.setCorner(Math.min(dp(cfg.radiusDp), h1 / 2f));
         FrameLayout.LayoutParams l1 = new FrameLayout.LayoutParams(
                 dp(cfg.widthDp), h1, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
@@ -857,40 +917,104 @@ public class MainActivity extends Activity {
         col.addView(b, lp);
     }
 
-    private void segmentado(LinearLayout col, String[] opciones, int sel, final IntSetter s) {
-        LinearLayout fila = new LinearLayout(this);
-        fila.setOrientation(LinearLayout.HORIZONTAL);
+    /** Selector con un indicador que se desliza hasta la opcion elegida. */
+    private void segmentado(LinearLayout col, final String[] opciones, int sel,
+                            final IntSetter s) {
+        final FrameLayout caja = new FrameLayout(this);
+        caja.setPadding(dp(4), dp(4), dp(4), dp(4));
+        if (vidrio) {
+            caja.setBackground(cristal(0x22FFFFFF, 0, 0, dp(28)));
+        } else {
+            GradientDrawable g = new GradientDrawable();
+            g.setColor((cPrimary & 0x00FFFFFF) | 0x1F000000);
+            g.setCornerRadius(dp(28));
+            caja.setBackground(g);
+        }
         LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        flp.topMargin = dp(6);
-        col.addView(fila, flp);
+        flp.topMargin = dp(8);
+        flp.bottomMargin = dp(2);
+        col.addView(caja, flp);
+
+        final View ind = new View(this);
+        if (vidrio) {
+            ind.setBackground(cristal(0x70FFFFFF, 0, 0, dp(24)));
+        } else {
+            GradientDrawable g = new GradientDrawable();
+            g.setColor(cPrimary);
+            g.setCornerRadius(dp(24));
+            ind.setBackground(g);
+        }
+        caja.addView(ind, new FrameLayout.LayoutParams(dp(60), dp(40)));
+
+        final LinearLayout fila = new LinearLayout(this);
+        fila.setOrientation(LinearLayout.HORIZONTAL);
+        caja.addView(fila, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, dp(40)));
+
+        final TextView[] etiquetas = new TextView[opciones.length];
+        final int[] actual = {sel};
         for (int i = 0; i < opciones.length; i++) {
             final int idx = i;
-            Button b = new Button(this);
-            b.setText(opciones[i]);
-            b.setAllCaps(false);
-            b.setTextSize(13);
-            b.setStateListAnimator(null);
-            b.setMinHeight(dp(44));
-            b.setBackground(fondoBoton(i == sel ? REL : CON));
-            int texto;
-            if (vidrio) {
-                texto = 0xFFFFFFFF;
-            } else {
-                texto = i == sel ? cOnPrimary : cPrimary;
-            }
-            b.setTextColor(texto);
-            if (i == sel) b.setTypeface(b.getTypeface(), Typeface.BOLD);
-            b.setOnClickListener(new View.OnClickListener() {
+            TextView t = new TextView(this);
+            t.setText(opciones[i]);
+            t.setTextSize(13);
+            t.setGravity(Gravity.CENTER);
+            t.setSingleLine(true);
+            t.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
+                    if (actual[0] == idx) return;
+                    actual[0] = idx;
+                    mover(ind, fila, opciones.length, idx, true);
+                    pintarSegmentos(etiquetas, idx);
                     s.set(idx);
                 }
             });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-            if (i > 0) lp.setMarginStart(dp(8));
-            fila.addView(b, lp);
+            etiquetas[i] = t;
+            fila.addView(t, new LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+        }
+        pintarSegmentos(etiquetas, sel);
+        fila.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot,
+                                       int or, int ob) {
+                if (r - l != or - ol) mover(ind, fila, opciones.length, actual[0], false);
+            }
+        });
+    }
+
+    private void pintarSegmentos(TextView[] etiquetas, int sel) {
+        for (int i = 0; i < etiquetas.length; i++) {
+            boolean on = i == sel;
+            int color;
+            if (vidrio) {
+                color = on ? 0xFFFFFFFF : 0xB3FFFFFF;
+            } else {
+                color = on ? cOnPrimary : cPrimary;
+            }
+            etiquetas[i].setTextColor(color);
+            etiquetas[i].setTypeface(null, on ? Typeface.BOLD : Typeface.NORMAL);
+        }
+    }
+
+    private void mover(View ind, LinearLayout fila, int n, int idx, boolean animar) {
+        int ancho = fila.getWidth() / Math.max(1, n);
+        if (ancho <= 0) return;
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) ind.getLayoutParams();
+        if (lp.width != ancho) {
+            lp.width = ancho;
+            ind.setLayoutParams(lp);
+        }
+        float x = idx * ancho;
+        ind.animate().cancel();
+        if (animar) {
+            ind.animate().translationX(x).setDuration(320)
+                    .setInterpolator(new android.view.animation.OvershootInterpolator(1.3f))
+                    .start();
+        } else {
+            ind.setTranslationX(x);
         }
     }
 

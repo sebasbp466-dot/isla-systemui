@@ -3,6 +3,7 @@ package com.lancelot.island;
 import android.app.AppOpsManager;
 import android.app.Notification;
 import android.app.NotificationManager;
+import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -25,6 +26,7 @@ import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.net.wifi.WifiManager;
 import android.os.SystemClock;
 import android.service.notification.StatusBarNotification;
 
@@ -64,6 +66,9 @@ final class Eventos {
     private static Boolean ultimoAvion;
     private static Boolean ultimoNoMolestar;
     private static Boolean ultimoAhorro;
+    private static Boolean ultimoWifi;
+    private static Boolean ultimoBt;
+    private static boolean calienteAvisado;
     private static boolean camaraActiva;
     private static boolean microActivo;
     private static long ignoraLinternaHasta;
@@ -112,6 +117,8 @@ final class Eventos {
         f.addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED);
         f.addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
         f.addAction(ACCION_VOLUMEN);
+        f.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
+        f.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
         ctx.registerReceiver(receptor, f, null, h, Context.RECEIVER_NOT_EXPORTED);
 
         iniciarPrivacidad();
@@ -183,6 +190,12 @@ final class Eventos {
                     case PowerManager.ACTION_POWER_SAVE_MODE_CHANGED:
                         ahorro();
                         break;
+                    case WifiManager.WIFI_STATE_CHANGED_ACTION:
+                        wifi(i.getIntExtra(WifiManager.EXTRA_WIFI_STATE, -1));
+                        break;
+                    case BluetoothAdapter.ACTION_STATE_CHANGED:
+                        bluetoothEstado(i.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1));
+                        break;
                     case ACCION_VOLUMEN:
                         volumen(i.getIntExtra(EXTRA_TIPO_VOL, -1),
                                 i.getIntExtra(EXTRA_VALOR_VOL, -1));
@@ -227,9 +240,32 @@ final class Eventos {
         } else {
             e.texto = "Conectado";
         }
+        double w = vatios(bat);
+        if (w >= 15.0) {
+            e.titulo = "Carga rápida";
+            e.texto = e.texto + " \u00B7 " + Math.round(w) + " W";
+        } else if (w >= 0.5) {
+            e.texto = e.texto + " \u00B7 " + String.format(java.util.Locale.ROOT, "%.1f", w) + " W";
+        }
         String resta = tiempoRestante();
         if (resta != null) e.texto = e.texto + " \u00B7 " + resta;
         return e;
+    }
+
+    /** Potencia de carga en vatios (corriente por voltaje); 0 si el telefono no lo informa. */
+    private static double vatios(Intent bat) {
+        try {
+            BatteryManager bm = (BatteryManager) ctx.getSystemService(Context.BATTERY_SERVICE);
+            long ua = Math.abs((long) bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW));
+            int mv = bat != null ? bat.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) : 0;
+            if (ua <= 0 || mv <= 0) return 0.0;
+            // Algunos telefonos informan en mA y otros en uA
+            double amperios = ua > 20000 ? ua / 1e6 : ua / 1e3;
+            double w = amperios * (mv / 1000.0);
+            return w > 0.5 && w < 150.0 ? w : 0.0;
+        } catch (Throwable t) {
+            return 0.0;
+        }
     }
 
     /** "1 h 20 min para completar", o null si el sistema aun no lo sabe. */
@@ -295,6 +331,20 @@ final class Eventos {
                     try {
                         int n = porcentaje(i);
                         int estado = i.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+                        int temp = i.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0);
+                        if (temp >= 420 && !calienteAvisado) {
+                            calienteAvisado = true;
+                            Evento cal = new Evento(Evento.BATERIA);
+                            cal.glifo = GlyphView.BATERIA;
+                            cal.nivel = n;
+                            cal.color = ROJO;
+                            cal.titulo = "Batería caliente";
+                            cal.texto = String.format(java.util.Locale.ROOT, "%.1f °C \u00B7 conviene dejar de cargar",
+                                    temp / 10.0);
+                            isla().show(cal);
+                        } else if (temp < 400) {
+                            calienteAvisado = false;
+                        }
                         if (!lleno && cargando
                                 && (estado == BatteryManager.BATTERY_STATUS_FULL || n >= 100)) {
                             lleno = true;
@@ -425,6 +475,34 @@ final class Eventos {
         if (ultimoAvion != null && ultimoAvion == on) return;
         ultimoAvion = on;
         isla().show(evAjuste(GlyphView.AVION, 0xFF64D2FF, on, "Modo avión",
+                on ? "Activado" : "Desactivado"));
+    }
+
+    private static void wifi(int estado) {
+        if (estado != WifiManager.WIFI_STATE_ENABLED && estado != WifiManager.WIFI_STATE_DISABLED) {
+            return;
+        }
+        boolean on = estado == WifiManager.WIFI_STATE_ENABLED;
+        if (ultimoWifi == null) {
+            // El primer aviso es el estado inicial, no un cambio
+            ultimoWifi = on;
+            return;
+        }
+        if (ultimoWifi == on) return;
+        ultimoWifi = on;
+        isla().show(evAjuste(GlyphView.WIFI, AZUL, on, "Wi-Fi", on ? "Activado" : "Desactivado"));
+    }
+
+    private static void bluetoothEstado(int estado) {
+        if (estado != BluetoothAdapter.STATE_ON && estado != BluetoothAdapter.STATE_OFF) return;
+        boolean on = estado == BluetoothAdapter.STATE_ON;
+        if (ultimoBt == null) {
+            ultimoBt = on;
+            return;
+        }
+        if (ultimoBt == on) return;
+        ultimoBt = on;
+        isla().show(evAjuste(GlyphView.BLUETOOTH, AZUL, on, "Bluetooth",
                 on ? "Activado" : "Desactivado"));
     }
 
@@ -875,6 +953,31 @@ final class Eventos {
                     case 21: {
                         Evento e = evNotifPrueba("Carlos",
                                 "Te mandé las fotos del viaje, mira cuando puedas y dime qué te parecen");
+                        isla().show(e);
+                        break;
+                    }
+                    case 23:
+                        isla().show(evAjuste(GlyphView.WIFI, AZUL, true, "Wi-Fi", "Activado"));
+                        break;
+                    case 24:
+                        isla().show(evAjuste(GlyphView.BLUETOOTH, AZUL, true, "Bluetooth",
+                                "Activado"));
+                        break;
+                    case 25: {
+                        Evento e = new Evento(Evento.BATERIA);
+                        e.glifo = GlyphView.BATERIA;
+                        e.nivel = 63;
+                        e.color = ROJO;
+                        e.titulo = "Batería caliente";
+                        e.texto = "43.5 °C \u00B7 conviene dejar de cargar";
+                        isla().show(e);
+                        break;
+                    }
+                    case 26: {
+                        Evento e = evCarga(bateriaActual());
+                        e.titulo = "Carga rápida";
+                        e.texto = "Cargador de pared \u00B7 18 W \u00B7 35 min para llenar";
+                        e.nivel = nivel;
                         isla().show(e);
                         break;
                     }

@@ -75,11 +75,15 @@ final class IslandView extends LinearLayout {
     private final GlyphView bSiguiente;
     private final LinearLayout botones;
 
-    private final GradientDrawable base;
-    private final GradientDrawable shine;
+    private final FondoDrawable fondo;
+    private Drawable blur;
+    private java.lang.reflect.Method mBlurRadio;
+    private java.lang.reflect.Method mBlurEsquina;
+    private String estadoBlur = "sin intentar";
+    private float esquina;
 
     private ValueAnimator contador;
-    private ValueAnimator destello;
+    private ValueAnimator luzAnim;
     private Evento ev;
     private boolean expandido;
     private String ultTitulo;
@@ -100,20 +104,8 @@ final class IslandView extends LinearLayout {
         setOrientation(VERTICAL);
         setGravity(Gravity.CENTER_VERTICAL);
 
-        base = new GradientDrawable();
-        if (cfg.style == 1) {
-            // Cristal: fondo translucido, borde claro y un brillo suave arriba
-            int a = Math.min(Color.alpha(cfg.bgColor), 0xCC);
-            base.setColor((cfg.bgColor & 0x00FFFFFF) | (a << 24));
-            base.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
-            shine = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                    new int[]{0x45FFFFFF, 0x00FFFFFF});
-            setBackground(new LayerDrawable(new Drawable[]{base, shine}));
-        } else {
-            base.setColor(cfg.bgColor);
-            shine = null;
-            setBackground(base);
-        }
+        fondo = new FondoDrawable(cfg.style, cfg.bgColor, density);
+        setBackground(fondo);
 
         // ---- fila principal
         fila = new LinearLayout(ctx);
@@ -318,55 +310,109 @@ final class IslandView extends LinearLayout {
 
     /** Radio de las esquinas en pixeles. */
     void setCorner(float px) {
-        base.setCornerRadius(px);
-        if (shine != null) shine.setCornerRadius(px);
+        esquina = px;
+        fondo.setRadio(px);
+        if (blur != null && mBlurEsquina != null) {
+            try {
+                mBlurEsquina.invoke(blur, px);
+            } catch (Throwable t) {
+                mBlurEsquina = null;
+            }
+        }
+    }
+
+    /** Resultado del intento de desenfoque, para el registro de LSPosed. */
+    String estadoBlur() {
+        return estadoBlur;
+    }
+
+    /**
+     * Desenfoque real del fondo (estilo Cristal). Usa el mismo mecanismo que la propia ventana
+     * del sistema; si la ROM no lo permite se queda el cristal translucido sin desenfoque.
+     * Hay que llamarlo con la vista ya añadida a la ventana.
+     */
+    void activarBlur() {
+        if (cfg.style != 1 || cfg.blurDp <= 0 || blur != null) {
+            if (cfg.style == 1 && cfg.blurDp <= 0) estadoBlur = "desactivado en ajustes";
+            return;
+        }
+        try {
+            java.lang.reflect.Method gv = View.class.getDeclaredMethod("getViewRootImpl");
+            gv.setAccessible(true);
+            Object vri = gv.invoke(this);
+            if (vri == null) {
+                estadoBlur = "sin ViewRootImpl";
+                return;
+            }
+            java.lang.reflect.Method crear = vri.getClass().getDeclaredMethod(
+                    "createBackgroundBlurDrawable");
+            crear.setAccessible(true);
+            Drawable d = (Drawable) crear.invoke(vri);
+            if (d == null) {
+                estadoBlur = "la ROM no crea el desenfoque";
+                return;
+            }
+            java.lang.reflect.Method radio = d.getClass().getDeclaredMethod("setBlurRadius",
+                    int.class);
+            radio.setAccessible(true);
+            radio.invoke(d, dp(cfg.blurDp));
+            java.lang.reflect.Method esq = null;
+            try {
+                esq = d.getClass().getDeclaredMethod("setCornerRadius", float.class);
+                esq.setAccessible(true);
+                esq.invoke(d, esquina);
+            } catch (Throwable t) {
+                esq = null;
+            }
+            mBlurRadio = radio;
+            mBlurEsquina = esq;
+            blur = d;
+            fondo.setConBlur(true);
+            setBackground(new LayerDrawable(new Drawable[]{d, fondo}));
+            estadoBlur = "activo (" + cfg.blurDp + " dp)";
+        } catch (Throwable t) {
+            blur = null;
+            estadoBlur = "no disponible: " + t.getClass().getSimpleName();
+        }
     }
 
     boolean isExpandido() {
         return expandido;
     }
 
-    /** Aro de luz del color del evento que aparece y se desvanece. */
-    void destello(int color) {
+    /** Cometa de luz del color del evento que da una vuelta al borde de la isla. */
+    void destello(final int color) {
         if (!cfg.glow) return;
-        if (destello != null) destello.cancel();
-        final int c = (color & 0x00FFFFFF);
-        final int ancho = Math.max(2, dp(2));
-        destello = ValueAnimator.ofFloat(0f, 1f);
-        destello.setDuration(cfg.ms(1100));
-        destello.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+        if (luzAnim != null) luzAnim.cancel();
+        luzAnim = ValueAnimator.ofFloat(0f, 1f);
+        luzAnim.setDuration(cfg.ms(1500));
+        luzAnim.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+        luzAnim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
             public void onAnimationUpdate(ValueAnimator a) {
                 float f = (Float) a.getAnimatedValue();
-                int al = Math.round(210f * (float) Math.sin(Math.PI * f));
-                base.setStroke(ancho, c | (al << 24));
+                // Gira una vuelta y media; aparece rapido y se apaga al final
+                float alfa = f < 0.15f ? f / 0.15f : (f > 0.7f ? (1f - f) / 0.3f : 1f);
+                fondo.setLuz(color, 540f * f, alfa);
             }
         });
-        destello.addListener(new android.animation.AnimatorListenerAdapter() {
+        luzAnim.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(android.animation.Animator animation) {
-                restaurarBorde();
+                fondo.setLuz(0, 0f, 0f);
             }
 
             @Override
             public void onAnimationCancel(android.animation.Animator animation) {
-                restaurarBorde();
+                fondo.setLuz(0, 0f, 0f);
             }
         });
-        destello.start();
-    }
-
-    private void restaurarBorde() {
-        if (cfg.style == 1) {
-            base.setStroke(Math.max(1, dp(1)), 0x66FFFFFF);
-        } else {
-            base.setStroke(0, 0);
-        }
+        luzAnim.start();
     }
 
     @Override
     protected void onDetachedFromWindow() {
-        if (destello != null) destello.cancel();
+        if (luzAnim != null) luzAnim.cancel();
         if (contador != null) contador.cancel();
         crono.stop();
         super.onDetachedFromWindow();
@@ -379,6 +425,7 @@ final class IslandView extends LinearLayout {
     void configurar(final Evento e, boolean ex, boolean animar) {
         ev = e;
         expandido = ex;
+        if (!animar) reposo();
         if (contador != null) {
             contador.cancel();
             contador = null;
@@ -534,9 +581,11 @@ final class IslandView extends LinearLayout {
                 || e.tipo == Evento.PROGRESO || e.tipo == Evento.VOLUMEN);
         if (!conBarra && !conBotones) {
             inferior.setVisibility(GONE);
+            if (ex && animar) escalonar(false);
             return;
         }
         inferior.setVisibility(VISIBLE);
+        if (ex && animar) escalonar(true);
 
         if (conBarra) {
             barraFrame.setVisibility(VISIBLE);
@@ -552,6 +601,7 @@ final class IslandView extends LinearLayout {
 
         if (e.tipo == Evento.MUSICA) {
             controles.setVisibility(VISIBLE);
+            barra.setBrillo(false);
             barra.setColores(0xFFFFFFFF, 0x33FFFFFF);
             if (e.duracion > 0) {
                 float f = e.posicionAhora() / (float) e.duracion;
@@ -571,6 +621,7 @@ final class IslandView extends LinearLayout {
             controles.setVisibility(GONE);
             if (conBarra) {
                 barra.setColores(e.color, 0x33FFFFFF);
+                barra.setBrillo(true);
                 float f = Math.max(0, e.nivel) / 100f;
                 if (animar) {
                     barra.setProgreso(0f);
@@ -586,6 +637,51 @@ final class IslandView extends LinearLayout {
         } else {
             botones.setVisibility(GONE);
             botonesDe = null;
+        }
+    }
+
+    /** Todo en su sitio, sin restos de una animacion cortada a medias. */
+    private void reposo() {
+        View[] vs = {iconoFrame, titulo, cuerpo, derecha, inferior};
+        for (View v : vs) {
+            v.animate().cancel();
+            v.setAlpha(1f);
+            v.setScaleX(1f);
+            v.setScaleY(1f);
+            v.setTranslationY(0f);
+        }
+    }
+
+    /** Entrada en cascada: el icono salta, los textos suben con fundido, luego lo demas. */
+    private void escalonar(boolean conInferior) {
+        iconoFrame.setPivotX(iconoFrame.getWidth() / 2f);
+        iconoFrame.setScaleX(0.4f);
+        iconoFrame.setScaleY(0.4f);
+        iconoFrame.setAlpha(0f);
+        iconoFrame.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(cfg.ms(420))
+                .setInterpolator(new android.view.animation.OvershootInterpolator(2.2f)).start();
+        View[] tx = {titulo, cuerpo};
+        for (int i = 0; i < tx.length; i++) {
+            tx[i].setAlpha(0f);
+            tx[i].setTranslationY(dp(8));
+            tx[i].animate().alpha(1f).translationY(0f).setStartDelay(cfg.ms(60 + 55 * i))
+                    .setDuration(cfg.ms(300))
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f))
+                    .start();
+        }
+        derecha.setAlpha(0f);
+        derecha.setScaleX(0.6f);
+        derecha.setScaleY(0.6f);
+        derecha.animate().alpha(1f).scaleX(1f).scaleY(1f).setStartDelay(cfg.ms(150))
+                .setDuration(cfg.ms(340))
+                .setInterpolator(new android.view.animation.OvershootInterpolator(2f)).start();
+        if (conInferior) {
+            inferior.setAlpha(0f);
+            inferior.setTranslationY(dp(6));
+            inferior.animate().alpha(1f).translationY(0f).setStartDelay(cfg.ms(200))
+                    .setDuration(cfg.ms(300))
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f))
+                    .start();
         }
     }
 

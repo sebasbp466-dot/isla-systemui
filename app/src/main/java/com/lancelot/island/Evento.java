@@ -47,6 +47,8 @@ final class Evento {
 
     /** Paquete de la app que origino el evento (notificaciones). */
     String pkg;
+    /** Cuantas notificaciones pendientes hay (para el numero de la cápsula minimizada). */
+    int contador;
     /** Llega minimizada: solo la capsula compacta, se expande al tocarla. */
     boolean minimizada;
     /** Primera accion nativa de la notificacion (sin respuesta de texto). */
@@ -90,6 +92,7 @@ final class Evento {
         o.nativaTxt = nativaTxt;
         o.nativaPi = nativaPi;
         o.base = base;
+        o.contador = contador;
         return o;
     }
 

@@ -42,6 +42,10 @@ final class IslaConfig {
     boolean haptic = false;
     /** Aro de luz de color alrededor de la isla cuando llega un evento. */
     boolean glow = true;
+    /** Desenfoque del fondo del estilo Cristal, en dp (0 = sin desenfoque). */
+    int blurDp = 24;
+    /** No mostrar la isla con el telefono en horizontal. */
+    boolean ocultarH = true;
     /** Notificaciones: 0 = siempre expandidas, 1 = siempre minimizadas, 2 = automatico. */
     int notifMode = 2;
     /** Apps cuyas notificaciones llegan siempre minimizadas (paquetes separados por coma). */
@@ -199,6 +203,12 @@ final class IslaConfig {
                     case "gl":
                         glow = "1".equals(v);
                         break;
+                    case "br":
+                        blurDp = clamp(Integer.parseInt(v), 0, 60);
+                        break;
+                    case "oh":
+                        ocultarH = "1".equals(v);
+                        break;
                     case "nm":
                         notifMode = clamp(Integer.parseInt(v), 0, 2);
                         break;
@@ -271,6 +281,8 @@ final class IslaConfig {
                 + ";vl=" + speed
                 + ";hp=" + b(haptic)
                 + ";gl=" + b(glow)
+                + ";br=" + blurDp
+                + ";oh=" + b(ocultarH)
                 + ";nm=" + notifMode
                 + ";ml=" + limpiar(minimizadas)
                 + ";xn=" + b(fNotif)
