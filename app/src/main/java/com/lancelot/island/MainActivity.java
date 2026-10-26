@@ -359,6 +359,37 @@ public class MainActivity extends Activity {
                         refrescar();
                     }
                 });
+        interruptor(s, "Doble toque rápido para descartar", cfg.dobleToque, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.dobleToque = v == 1;
+            }
+        });
+        interruptor(s, "Horario silencioso (solo llamadas, linterna, cronómetros)", cfg.silencio,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.silencio = v == 1;
+                    }
+                });
+        Etiqueta hora = new Etiqueta() {
+            @Override
+            public String de(int v) {
+                return v + ":00";
+            }
+        };
+        seek(s, "Silencio desde", 0, 23, cfg.silencioDesde, hora, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.silencioDesde = v;
+            }
+        });
+        seek(s, "Silencio hasta", 0, 23, cfg.silencioHasta, hora, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.silencioHasta = v;
+            }
+        });
         interruptor(s, "Con No molestar, notificaciones minimizadas", cfg.noMolestarMin,
                 new IntSetter() {
                     @Override
@@ -670,7 +701,7 @@ public class MainActivity extends Activity {
         filaPrueba(pr, "Wi-Fi", 23, "Bluetooth", 24);
         filaPrueba(pr, "Batería caliente", 25, "Carga rápida", 26);
         filaPrueba(pr, "Temporizador", 27, "Quitar temporizador", 28);
-        filaPrueba(pr, "Notif. con foto", 29, "Notif. normal", 21);
+        filaPrueba(pr, "Notif. con foto", 29, "Mensajes seguidos", 30);
         boton(pr, "Quitar la llamada de prueba", CON, new View.OnClickListener() {
             @Override
             public void onClick(View v) {

@@ -156,7 +156,15 @@ public class MainHook implements IXposedHookLoadPackage {
         Bundle exc = n.extras;
         if (cfg.fCrono && exc != null && exc.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false)
                 && !cfg.isBlocked(sbn.getPackageName())) {
-            crono(ctx, sbn, n);
+            crono(ctx, sbn, n, true);
+            return;
+        }
+
+        // Navegacion y alarmas en curso: capsula fija con el texto
+        if (cfg.fCrono && !cfg.isBlocked(sbn.getPackageName())
+                && (Notification.CATEGORY_NAVIGATION.equals(n.category)
+                || Notification.CATEGORY_ALARM.equals(n.category))) {
+            crono(ctx, sbn, n, false);
             return;
         }
 
@@ -291,24 +299,31 @@ public class MainHook implements IXposedHookLoadPackage {
 
     private static volatile String cronoClave;
 
-    private void crono(Context ctx, StatusBarNotification sbn, Notification n) {
+    private void crono(Context ctx, StatusBarNotification sbn, Notification n,
+                       boolean conReloj) {
         Bundle e = n.extras;
         CharSequence titulo = e.getCharSequence(Notification.EXTRA_TITLE);
         CharSequence texto = e.getCharSequence(Notification.EXTRA_TEXT);
-        boolean atras = e.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN, false);
+        boolean atras = conReloj
+                && e.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN, false);
         if (isEmpty(titulo)) titulo = etiquetaApp(ctx, sbn.getPackageName());
         Evento ev = new Evento(Evento.CRONO);
-        ev.glifo = GlyphView.RELOJ;
+        boolean nav = Notification.CATEGORY_NAVIGATION.equals(n.category);
+        ev.glifo = nav ? GlyphView.UBICACION : GlyphView.RELOJ;
         ev.activo = true;
-        ev.color = acento(n.color) == 0xFFFFFFFF ? 0xFFFF9F0A : acento(n.color);
+        ev.color = acento(n.color) == 0xFFFFFFFF
+                ? (nav ? 0xFF0A84FF : conReloj ? 0xFFFF9F0A : 0xFFFF453A) : acento(n.color);
         ev.clave = sbn.getKey();
         ev.pkg = sbn.getPackageName();
         ev.accion = n.contentIntent;
         ev.titulo = titulo;
-        ev.texto = isEmpty(texto) ? (atras ? "Temporizador" : "Cron\u00F3metro") : texto;
+        ev.texto = isEmpty(texto) ? (!conReloj ? "En curso"
+                : atras ? "Temporizador" : "Cron\u00F3metro") : texto;
         ev.cuentaAtras = atras;
-        long delta = n.when - System.currentTimeMillis();
-        ev.base = SystemClock.elapsedRealtime() + (atras ? delta : -Math.max(0, -delta));
+        if (conReloj) {
+            long delta = n.when - System.currentTimeMillis();
+            ev.base = SystemClock.elapsedRealtime() + (atras ? delta : -Math.max(0, -delta));
+        }
         if (n.actions != null) {
             java.util.ArrayList<Notification.Action> ac = new java.util.ArrayList<>();
             for (Notification.Action a : n.actions) {

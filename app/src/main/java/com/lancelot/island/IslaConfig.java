@@ -74,6 +74,12 @@ final class IslaConfig {
     boolean progBorde = true;
     /** Con No molestar activo, las notificaciones llegan minimizadas. */
     boolean noMolestarMin = true;
+    /** Doble toque rapido: descarta la isla. */
+    boolean dobleToque = true;
+    /** Horario silencioso: solo llamadas, linterna y cronometros. */
+    boolean silencio = false;
+    int silencioDesde = 23;
+    int silencioHasta = 7;
 
     private static volatile IslaConfig cache;
     private static boolean observando;
@@ -118,7 +124,20 @@ final class IslaConfig {
         return cfg;
     }
 
+    boolean enSilencio() {
+        if (!silencio) return false;
+        int hora = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        if (silencioDesde == silencioHasta) return false;
+        return silencioDesde < silencioHasta
+                ? hora >= silencioDesde && hora < silencioHasta
+                : hora >= silencioDesde || hora < silencioHasta;
+    }
+
     boolean permite(int tipo) {
+        if (tipo != Evento.LLAMADA && tipo != Evento.LINTERNA && tipo != Evento.CRONO
+                && enSilencio()) {
+            return false;
+        }
         switch (tipo) {
             case Evento.NOTIF:
                 return fNotif;
@@ -275,6 +294,18 @@ final class IslaConfig {
                     case "bp":
                         progBorde = "1".equals(v);
                         break;
+                    case "dt":
+                        dobleToque = "1".equals(v);
+                        break;
+                    case "sl":
+                        silencio = "1".equals(v);
+                        break;
+                    case "sd":
+                        silencioDesde = clamp(Integer.parseInt(v), 0, 23);
+                        break;
+                    case "sh":
+                        silencioHasta = clamp(Integer.parseInt(v), 0, 23);
+                        break;
                     case "nd":
                         noMolestarMin = "1".equals(v);
                         break;
@@ -330,6 +361,10 @@ final class IslaConfig {
                 + ";xr=" + b(fCrono)
                 + ";bp=" + b(progBorde)
                 + ";nd=" + b(noMolestarMin)
+                + ";dt=" + b(dobleToque)
+                + ";sl=" + b(silencio)
+                + ";sd=" + silencioDesde
+                + ";sh=" + silencioHasta
                 + ";bl=" + limpiar(blocked);
     }
 

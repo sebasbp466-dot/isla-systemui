@@ -548,7 +548,8 @@ final class IslandView extends LinearLayout {
         boolean conLeyenda = ex && e.tipo == Evento.NOTIF && !TextUtils.isEmpty(e.app);
         leyenda.setVisibility(conLeyenda ? VISIBLE : GONE);
         if (conLeyenda) {
-            leyenda.setText(e.app);
+            leyenda.setText(e.agrupadas > 1 ? e.app + " \u00B7 " + e.agrupadas + " mensajes"
+                    : e.app);
             leyenda.setTextColor(e.color == 0xFFFFFFFF ? 0xFF9A9AA2 : e.color);
         }
         boolean conFoto = ex && e.imagen != null;
@@ -629,7 +630,7 @@ final class IslandView extends LinearLayout {
             valor.setVisibility(VISIBLE);
             valor.setTextColor(e.color);
             valor.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-            valor.setText("●");
+            valor.setText(e.agrupadas > 1 ? String.valueOf(e.agrupadas) : "●");
         }
 
         boolean conBorde = cfg.progBorde && (e.tipo == Evento.CARGA || e.tipo == Evento.PROGRESO

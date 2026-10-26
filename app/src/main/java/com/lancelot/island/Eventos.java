@@ -1119,6 +1119,16 @@ final class Eventos {
                         isla().setCrono(e, true);
                         break;
                     }
+                    case 30: {
+                        for (int k = 1; k <= 3; k++) {
+                            Evento e = evNotifPrueba("Ana", "Mensaje número " + k);
+                            e.app = "Mensajes";
+                            e.pkg = "prueba.mensajes";
+                            e.clave = "prueba_msg_" + k;
+                            isla().show(e);
+                        }
+                        break;
+                    }
                     case 28:
                         isla().setCrono(null, false);
                         break;

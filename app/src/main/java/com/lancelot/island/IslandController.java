@@ -407,6 +407,25 @@ final class IslandController {
             return;
         }
 
+        // Mensajes seguidos de la misma app: se agrupan en la isla que ya se ve
+        if (e.tipo == Evento.NOTIF && shown && pill != null && actual != null
+                && actual.tipo == Evento.NOTIF && e.pkg != null && e.pkg.equals(actual.pkg)
+                && SystemClock.elapsedRealtime() - ultimaNotif < 20000) {
+            e.agrupadas = actual.agrupadas + 1;
+            e.minimizada = actual.minimizada;
+            e.contador = actual.contador;
+            ultimaNotif = SystemClock.elapsedRealtime();
+            registrar(e);
+            actual = e;
+            pill.configurar(e, expanded, false);
+            if (expanded) {
+                reiniciarColapso();
+            } else {
+                pill.destello(e.color);
+            }
+            return;
+        }
+
         boolean min = decidirMinimizada(e);
         registrar(e);
         if (e.tipo == Evento.NOTIF) ultimaNotif = SystemClock.elapsedRealtime();
@@ -781,8 +800,23 @@ final class IslandController {
     }
 
     /** Toque: expande una capsula compacta; en expandida abre la accion del evento. */
+    private long ultimoToque;
+
     private void tocar() {
         if (pill == null || actual == null) return;
+        long ahora = SystemClock.elapsedRealtime();
+        boolean doble = cfg.dobleToque && ahora - ultimoToque < 350;
+        ultimoToque = ahora;
+        if (doble && expanded) {
+            // Doble toque rapido: se descarta sin abrir nada
+            if (esFijo(actual)) {
+                cancelarPasos();
+                colapsar(gen);
+            } else {
+                descartar(0f, -dp(30));
+            }
+            return;
+        }
         if (!expanded) {
             cancelarPasos();
             transitorio = true;

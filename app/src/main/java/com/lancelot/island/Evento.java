@@ -54,6 +54,8 @@ final class Evento {
     Drawable imagen;
     /** El cronometro cuenta hacia atras (temporizador). */
     boolean cuentaAtras;
+    /** Mensajes seguidos de la misma app agrupados en esta isla. */
+    int agrupadas = 1;
     /** Cuantas notificaciones pendientes hay (para el numero de la cápsula minimizada). */
     int contador;
     /** Llega minimizada: solo la capsula compacta, se expande al tocarla. */
@@ -103,6 +105,7 @@ final class Evento {
         o.app = app;
         o.imagen = imagen;
         o.cuentaAtras = cuentaAtras;
+        o.agrupadas = agrupadas;
         return o;
     }
 
