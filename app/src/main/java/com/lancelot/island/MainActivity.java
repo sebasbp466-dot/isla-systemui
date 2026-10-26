@@ -359,6 +359,13 @@ public class MainActivity extends Activity {
                         refrescar();
                     }
                 });
+        interruptor(s, "Ocultar en pantalla completa (experimental)", cfg.ocultarFs,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.ocultarFs = v == 1;
+                    }
+                });
         interruptor(s, "Doble toque rápido para descartar", cfg.dobleToque, new IntSetter() {
             @Override
             public void set(int v) {

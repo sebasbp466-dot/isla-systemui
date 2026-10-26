@@ -56,6 +56,9 @@ final class Evento {
     boolean cuentaAtras;
     /** Mensajes seguidos de la misma app agrupados en esta isla. */
     int agrupadas = 1;
+    /** Accion de respuesta rapida de la notificacion (con RemoteInput). */
+    PendingIntent respPi;
+    android.app.RemoteInput[] respRi;
     /** Cuantas notificaciones pendientes hay (para el numero de la cápsula minimizada). */
     int contador;
     /** Llega minimizada: solo la capsula compacta, se expande al tocarla. */
@@ -106,6 +109,8 @@ final class Evento {
         o.imagen = imagen;
         o.cuentaAtras = cuentaAtras;
         o.agrupadas = agrupadas;
+        o.respPi = respPi;
+        o.respRi = respRi;
         return o;
     }
 

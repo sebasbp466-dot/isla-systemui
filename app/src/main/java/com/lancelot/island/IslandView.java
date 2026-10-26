@@ -191,15 +191,15 @@ final class IslandView extends LinearLayout {
         ecual = new EqualizerView(ctx);
         derecha.addView(ecual, new FrameLayout.LayoutParams(dp(18), dp(14), Gravity.CENTER));
         valor = new TextView(ctx);
-        valor.setTypeface(Typeface.create(cfg.style == 1 ? "sans-serif-light"
-                : "sans-serif-condensed", Typeface.BOLD));
+        valor.setTypeface(cfg.style == 2 ? Typeface.MONOSPACE : Typeface.create(
+                cfg.style == 1 ? "sans-serif-light" : "sans-serif-condensed", Typeface.BOLD));
         valor.setSingleLine(true);
         derecha.addView(valor, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER));
         crono = new Chronometer(ctx);
-        crono.setTypeface(Typeface.create(cfg.style == 1 ? "sans-serif-light"
-                : "sans-serif-condensed", Typeface.BOLD));
+        crono.setTypeface(cfg.style == 2 ? Typeface.MONOSPACE : Typeface.create(
+                cfg.style == 1 ? "sans-serif-light" : "sans-serif-condensed", Typeface.BOLD));
         crono.setSingleLine(true);
         derecha.addView(crono, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -432,6 +432,141 @@ final class IslandView extends LinearLayout {
         }
     }
 
+    /** Cristal: el desenfoque pasa de 0 al valor elegido, como si la lente enfocara. */
+    void enfocar(int ms) {
+        if (blur == null || mBlurRadio == null || cfg.blurDp <= 0) return;
+        ValueAnimator va = ValueAnimator.ofFloat(0f, 1f);
+        va.setDuration(ms);
+        va.setInterpolator(new android.view.animation.DecelerateInterpolator(1.5f));
+        va.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator a) {
+                try {
+                    float f = (Float) a.getAnimatedValue();
+                    mBlurRadio.invoke(blur, Math.round(dp(cfg.blurDp) * f));
+                } catch (Throwable t) {
+                    // sin desenfoque animado, se queda el fijo
+                }
+            }
+        });
+        va.start();
+    }
+
+    /** Neon: parpadeo de tubo que se enciende. */
+    void parpadeo() {
+        final float[] pasos = {0f, 1f, 0.35f, 1f, 0.6f, 1f};
+        ValueAnimator va = ValueAnimator.ofFloat(0f, pasos.length - 1f);
+        va.setDuration(cfg.ms(340));
+        va.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator a) {
+                float v = (Float) a.getAnimatedValue();
+                int i = Math.min(pasos.length - 2, (int) v);
+                float t = v - i;
+                setAlpha(pasos[i] + (pasos[i + 1] - pasos[i]) * t);
+            }
+        });
+        va.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                setAlpha(1f);
+            }
+        });
+        va.start();
+    }
+
+    /** true si la barra de estado esta oculta (video, juegos); false si no se puede saber. */
+    boolean pantallaCompleta() {
+        try {
+            android.view.WindowInsets wi = getRootWindowInsets();
+            if (wi == null) return false;
+            boolean vis = wi.isVisible(android.view.WindowInsets.Type.statusBars());
+            de.robv.android.xposed.XposedBridge.log("[IslaSystemUI] barra visible=" + vis);
+            return !vis;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private boolean respondiendoVista;
+
+    interface AlResponder {
+        void enviar(String texto);
+
+        void cancelar();
+    }
+
+    /** Cambia los botones por un campo de texto para contestar. Devuelve el campo. */
+    android.widget.EditText mostrarRespuesta(String pista, final AlResponder cb) {
+        respondiendoVista = true;
+        botonesDe = null;
+        botones.removeAllViews();
+        botones.setVisibility(VISIBLE);
+        final android.widget.EditText et = new android.widget.EditText(getContext());
+        et.setSingleLine(true);
+        et.setHint(pista);
+        et.setTextColor(Color.WHITE);
+        et.setHintTextColor(0x99FFFFFF);
+        et.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        et.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEND);
+        et.setPadding(dp(14), 0, dp(14), 0);
+        GradientDrawable fe = new GradientDrawable();
+        fe.setColor(0x33FFFFFF);
+        fe.setCornerRadius(dp(18));
+        et.setBackground(fe);
+        LinearLayout.LayoutParams lpe = new LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT,
+                1f);
+        botones.addView(et, lpe);
+        et.setOnEditorActionListener(new android.widget.TextView.OnEditorActionListener() {
+            @Override
+            public boolean onEditorAction(TextView v, int actionId, android.view.KeyEvent event) {
+                cb.enviar(String.valueOf(et.getText()));
+                return true;
+            }
+        });
+        TextView env = new TextView(getContext());
+        env.setText("Enviar");
+        env.setTextColor(Color.WHITE);
+        env.setTypeface(Typeface.DEFAULT_BOLD);
+        env.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        env.setGravity(Gravity.CENTER);
+        GradientDrawable fb = new GradientDrawable();
+        fb.setColor(0xFF2F7DF6);
+        fb.setCornerRadius(dp(18));
+        env.setBackground(fb);
+        LinearLayout.LayoutParams lpb = new LinearLayout.LayoutParams(dp(72), LayoutParams.MATCH_PARENT);
+        lpb.setMarginStart(dp(6));
+        botones.addView(env, lpb);
+        env.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                cb.enviar(String.valueOf(et.getText()));
+            }
+        });
+        TextView x = new TextView(getContext());
+        x.setText("\u2715");
+        x.setTextColor(0xCCFFFFFF);
+        x.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        x.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams lpx = new LinearLayout.LayoutParams(dp(36), LayoutParams.MATCH_PARENT);
+        botones.addView(x, lpx);
+        x.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                cb.cancelar();
+            }
+        });
+        return et;
+    }
+
+    void ocultarRespuesta() {
+        respondiendoVista = false;
+        botonesDe = null;
+        if (ev != null && ev.botonTxt != null && ev.botonTxt.length > 0 && expandido) {
+            construirBotones(ev);
+        }
+    }
+
     boolean isExpandido() {
         return expandido;
     }
@@ -441,7 +576,7 @@ final class IslandView extends LinearLayout {
         if (!cfg.glow) return;
         if (luzAnim != null) luzAnim.cancel();
         luzAnim = ValueAnimator.ofFloat(0f, 1f);
-        luzAnim.setDuration(cfg.ms(1500));
+        luzAnim.setDuration(cfg.ms(cfg.style == 1 ? 1100 : cfg.style == 2 ? 900 : 1500));
         luzAnim.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
         luzAnim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
             @Override
@@ -449,20 +584,30 @@ final class IslandView extends LinearLayout {
                 float f = (Float) a.getAnimatedValue();
                 // Gira una vuelta y media; aparece rapido y se apaga al final
                 float alfa = f < 0.15f ? f / 0.15f : (f > 0.7f ? (1f - f) / 0.3f : 1f);
-                fondo.setLuz(color, 540f * f, alfa);
-                if (cfg.style == 1) fondo.setReflejo(f < 0.65f ? f / 0.65f : -1f);
+                if (cfg.style == 0) {
+                    // Hyper: cometa de luz que da vueltas
+                    fondo.setLuz(color, 540f * f, alfa);
+                } else if (cfg.style == 1) {
+                    // Cristal: solo un reflejo de vidrio que barre la superficie
+                    fondo.setReflejo(f < 0.65f ? f / 0.65f : -1f);
+                } else {
+                    // Neon: el borde de luz se dibuja solo alrededor
+                    fondo.setTrazo(f < 0.7f ? f / 0.7f : 1f);
+                }
             }
         });
         luzAnim.addListener(new android.animation.AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(android.animation.Animator animation) {
                 fondo.setLuz(0, 0f, 0f);
+                fondo.setTrazo(-1f);
                 fondo.setReflejo(-1f);
             }
 
             @Override
             public void onAnimationCancel(android.animation.Animator animation) {
                 fondo.setLuz(0, 0f, 0f);
+                fondo.setTrazo(-1f);
                 fondo.setReflejo(-1f);
             }
         });
@@ -688,7 +833,7 @@ final class IslandView extends LinearLayout {
         if (e.tipo == Evento.MUSICA) {
             controles.setVisibility(VISIBLE);
             barra.setBrillo(false);
-            barra.setColores(0xFFFFFFFF, 0x33FFFFFF);
+            barra.setColores(e.color, (e.color & 0x00FFFFFF) | 0x38000000);
             if (e.duracion > 0) {
                 float f = e.posicionAhora() / (float) e.duracion;
                 if (e.reproduciendo) {
@@ -701,7 +846,7 @@ final class IslandView extends LinearLayout {
             }
             bAnterior.set(GlyphView.ANTERIOR, 0f, false, 0, 0xFFFFFFFF);
             bPlay.set(e.reproduciendo ? GlyphView.PAUSA : GlyphView.PLAY, 0f, false, 0,
-                    0xFFFFFFFF);
+                    e.color);
             bSiguiente.set(GlyphView.SIGUIENTE, 0f, false, 0, 0xFFFFFFFF);
         } else {
             controles.setVisibility(GONE);
@@ -719,7 +864,11 @@ final class IslandView extends LinearLayout {
         }
 
         if (conBotones) {
-            construirBotones(e);
+            if (respondiendoVista) {
+                botones.setVisibility(VISIBLE);
+            } else {
+                construirBotones(e);
+            }
         } else {
             botones.setVisibility(GONE);
             botonesDe = null;

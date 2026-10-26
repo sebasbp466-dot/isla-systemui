@@ -67,6 +67,13 @@ final class FondoDrawable extends Drawable {
 
     private float auraNivel;
     private int neonColor = 0xFFFFFFFF;
+    private float neonTrazo = -1f;
+    private final Path neonPath = new Path();
+    private final Path neonSeg = new Path();
+    private float nW;
+    private float nH;
+    private float nR;
+    private float nLen;
     private float progreso = -1f;
     private int progresoColor = 0xFFFFFFFF;
     private final Paint progP = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -128,6 +135,12 @@ final class FondoDrawable extends Drawable {
         sombra.setShader(degradado);
         reborde.setShader(rebordeG);
         if (reflejoG != null) reflejoP.setShader(reflejoG);
+    }
+
+    /** Neon: el borde se dibuja solo de 0 a 1; negativo = completo. */
+    void setTrazo(float t) {
+        neonTrazo = t;
+        invalidateSelf();
     }
 
     /** Luz que recorre el borde segun el avance (carga, descarga, volumen). p < 0 la apaga. */
@@ -314,12 +327,32 @@ final class FondoDrawable extends Drawable {
             float nm = density * 1.2f;
             rf.set(b.left + nm, b.top + nm, b.right - nm, b.bottom - nm);
             float rn = Math.max(0f, r - nm);
-            neonP.setStrokeWidth(density * 5f);
-            neonP.setAlpha(Math.round(60f * nivel));
-            c.drawRoundRect(rf, rn, rn, neonP);
-            neonP.setStrokeWidth(density * 2f);
-            neonP.setAlpha(Math.round(240f * nivel));
-            c.drawRoundRect(rf, rn, rn, neonP);
+            neonP.setStrokeCap(Paint.Cap.ROUND);
+            if (neonTrazo >= 0f && neonTrazo < 1f) {
+                if (w != nW || h != nH || r != nR) {
+                    nW = w;
+                    nH = h;
+                    nR = r;
+                    neonPath.reset();
+                    neonPath.addRoundRect(rf, rn, rn, Path.Direction.CW);
+                    nLen = new PathMeasure(neonPath, false).getLength();
+                }
+                neonSeg.reset();
+                new PathMeasure(neonPath, false).getSegment(0f, nLen * neonTrazo, neonSeg, true);
+                neonP.setStrokeWidth(density * 5f);
+                neonP.setAlpha(Math.round(70f * nivel));
+                c.drawPath(neonSeg, neonP);
+                neonP.setStrokeWidth(density * 2f);
+                neonP.setAlpha(Math.round(250f * nivel));
+                c.drawPath(neonSeg, neonP);
+            } else {
+                neonP.setStrokeWidth(density * 5f);
+                neonP.setAlpha(Math.round(60f * nivel));
+                c.drawRoundRect(rf, rn, rn, neonP);
+                neonP.setStrokeWidth(density * 2f);
+                neonP.setAlpha(Math.round(240f * nivel));
+                c.drawRoundRect(rf, rn, rn, neonP);
+            }
         } else if (auraNivel > 0f && filoG != null) {
             // Hyper: un filo del color del evento en el borde de abajo
             float fm = filoP.getStrokeWidth() / 2f;

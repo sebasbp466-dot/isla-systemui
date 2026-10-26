@@ -253,6 +253,28 @@ public class MainHook implements IXposedHookLoadPackage {
                 break;
             }
         }
+        // Respuesta rapida desde la isla
+        if (n.actions != null && ev.botonTxt == null) {
+            for (Notification.Action a : n.actions) {
+                if (a == null || a.actionIntent == null) continue;
+                android.app.RemoteInput[] ri = a.getRemoteInputs();
+                if (ri == null || ri.length == 0) continue;
+                ev.respPi = a.actionIntent;
+                ev.respRi = ri;
+                break;
+            }
+            if (ev.respPi != null) {
+                final Context c2 = ctx;
+                ev.botonTxt = new String[]{"Responder"};
+                ev.botonColor = new int[]{0xFF2F7DF6};
+                ev.botonRun = new Runnable[]{new Runnable() {
+                    @Override
+                    public void run() {
+                        IslandController.get(c2).iniciarRespuesta();
+                    }
+                }};
+            }
+        }
         IslandController.get(ctx).show(ev);
     }
 

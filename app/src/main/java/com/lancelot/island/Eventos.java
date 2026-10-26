@@ -821,14 +821,45 @@ final class Eventos {
     /** Color de acento de la caratula: su color medio, con mas viveza para que se vea sobre negro. */
     private static int acento(Bitmap b) {
         try {
-            Bitmap un = Bitmap.createScaledBitmap(b, 1, 1, true);
-            int px = un.getPixel(0, 0);
-            if (un != b) un.recycle();
+            // Color dominante: se agrupan los pixeles por tono y gana el tono mas vistoso
+            Bitmap p = Bitmap.createScaledBitmap(b, 24, 24, true);
+            float[] peso = new float[12];
+            float[] sat = new float[12];
+            float[] val = new float[12];
             float[] hsv = new float[3];
-            Color.colorToHSV(px, hsv);
-            hsv[1] = Math.max(hsv[1], 0.55f);
-            hsv[2] = Math.max(hsv[2], 0.9f);
-            return Color.HSVToColor(hsv);
+            float gris = 0f;
+            for (int y = 0; y < 24; y++) {
+                for (int x = 0; x < 24; x++) {
+                    Color.colorToHSV(p.getPixel(x, y), hsv);
+                    if (hsv[1] < 0.18f || hsv[2] < 0.18f) {
+                        gris += 1f;
+                        continue;
+                    }
+                    int k = Math.min(11, (int) (hsv[0] / 30f));
+                    float w = hsv[1] * hsv[2];
+                    peso[k] += w;
+                    sat[k] += hsv[1] * w;
+                    val[k] += hsv[2] * w;
+                }
+            }
+            if (p != b) p.recycle();
+            int mejor = -1;
+            for (int k = 0; k < 12; k++) {
+                // un tono vecino tambien suma, para no partir un color en dos grupos
+                float t = peso[k] + 0.5f * (peso[(k + 1) % 12] + peso[(k + 11) % 12]);
+                if (mejor < 0 || t > peso[mejor] + 0.5f * (peso[(mejor + 1) % 12]
+                        + peso[(mejor + 11) % 12])) {
+                    mejor = k;
+                }
+            }
+            if (mejor < 0 || peso[mejor] < 3f) {
+                return gris > 300f ? 0xFFEDEDF2 : ROSA; // caratula en blanco y negro
+            }
+            // Tono medio del grupo ganador, mas vivo para que se vea sobre negro
+            float tono = mejor * 30f + 15f;
+            float s2 = Math.max(0.6f, sat[mejor] / peso[mejor]);
+            float v2 = Math.max(0.92f, val[mejor] / peso[mejor]);
+            return Color.HSVToColor(new float[]{tono, Math.min(1f, s2), Math.min(1f, v2)});
         } catch (Throwable t) {
             return ROSA;
         }

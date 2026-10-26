@@ -76,6 +76,8 @@ final class IslaConfig {
     boolean noMolestarMin = true;
     /** Doble toque rapido: descarta la isla. */
     boolean dobleToque = true;
+    /** Experimental: no mostrar la isla cuando la barra de estado esta oculta. */
+    boolean ocultarFs = false;
     /** Horario silencioso: solo llamadas, linterna y cronometros. */
     boolean silencio = false;
     int silencioDesde = 23;
@@ -294,6 +296,9 @@ final class IslaConfig {
                     case "bp":
                         progBorde = "1".equals(v);
                         break;
+                    case "fs":
+                        ocultarFs = "1".equals(v);
+                        break;
                     case "dt":
                         dobleToque = "1".equals(v);
                         break;
@@ -362,6 +367,7 @@ final class IslaConfig {
                 + ";bp=" + b(progBorde)
                 + ";nd=" + b(noMolestarMin)
                 + ";dt=" + b(dobleToque)
+                + ";fs=" + b(ocultarFs)
                 + ";sl=" + b(silencio)
                 + ";sd=" + silencioDesde
                 + ";sh=" + silencioHasta

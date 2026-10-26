@@ -462,6 +462,7 @@ final class IslandController {
             } else {
                 pill.configurar(e, false, false);
                 pill.destello(e.color);
+                if (cfg.style == 0) gota();
                 if (min) {
                     programarColapso(g, e.duracionMs > 0 ? e.duracionMs : minimaMs());
                 } else {
@@ -481,6 +482,15 @@ final class IslandController {
         expanded = false;
         entrar();
         pill.destello(e.color);
+        if (cfg.ocultarFs && e.tipo != Evento.LLAMADA) {
+            final IslandView pv = pill;
+            pv.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (pill == pv && pv.pantallaCompleta()) quitar();
+                }
+            });
+        }
         if (min) {
             programarColapso(g, e.duracionMs > 0 ? e.duracionMs : minimaMs());
         } else {
@@ -490,6 +500,117 @@ final class IslandController {
                     if (g == gen) expandir(g);
                 }
             }, cfg.ms(ESPERA_COMPACTA_MS));
+        }
+    }
+
+    /** Hyper: la capsula se estira y vuelve, como una gota, cuando cambia el contenido. */
+    private void gota() {
+        if (pill == null) return;
+        pill.setScaleX(1.2f);
+        pill.setScaleY(0.86f);
+        pill.animate().scaleX(1f).scaleY(1f).setDuration(cfg.ms(420))
+                .setInterpolator(new Muelle(5f, 1.3f)).start();
+    }
+
+    private volatile boolean respondiendo;
+
+    /** Boton Responder de una notificacion: el campo de texto aparece en la isla. */
+    void iniciarRespuesta() {
+        respondiendo = true;
+        hp.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    empezarRespuesta();
+                } catch (Throwable t) {
+                    respondiendo = false;
+                    XposedBridge.log(t);
+                }
+            }
+        });
+    }
+
+    private void empezarRespuesta() {
+        final Evento e = actual;
+        if (pill == null || e == null || e.respPi == null || e.respRi == null || !expanded) {
+            respondiendo = false;
+            return;
+        }
+        cancelarPasos();
+        try {
+            wm.updateViewLayout(root, params(true));
+        } catch (Throwable t) {
+            XposedBridge.log(t);
+        }
+        final android.widget.EditText et = pill.mostrarRespuesta("Responder a " + e.titulo,
+                new IslandView.AlResponder() {
+                    @Override
+                    public void enviar(String texto) {
+                        enviarRespuesta(e, texto);
+                    }
+
+                    @Override
+                    public void cancelar() {
+                        terminarRespuesta(false);
+                    }
+                });
+        et.requestFocus();
+        h.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    android.view.inputmethod.InputMethodManager imm =
+                            (android.view.inputmethod.InputMethodManager)
+                                    ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if (imm != null) imm.showSoftInput(et, 0);
+                } catch (Throwable t) {
+                    XposedBridge.log(t);
+                }
+            }
+        }, 250);
+    }
+
+    private void enviarRespuesta(Evento e, String texto) {
+        String t = texto == null ? "" : texto.trim();
+        if (t.isEmpty()) {
+            terminarRespuesta(false);
+            return;
+        }
+        try {
+            android.content.Intent i = new android.content.Intent();
+            android.os.Bundle b = new android.os.Bundle();
+            for (android.app.RemoteInput ri : e.respRi) {
+                b.putCharSequence(ri.getResultKey(), t);
+            }
+            android.app.RemoteInput.addResultsToIntent(e.respRi, i, b);
+            e.respPi.send(ctx, 0, i);
+        } catch (Throwable x) {
+            XposedBridge.log(x);
+        }
+        terminarRespuesta(true);
+    }
+
+    private void terminarRespuesta(boolean enviado) {
+        respondiendo = false;
+        if (pill == null) return;
+        try {
+            android.view.inputmethod.InputMethodManager imm =
+                    (android.view.inputmethod.InputMethodManager)
+                            ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.hideSoftInputFromWindow(pill.getWindowToken(), 0);
+        } catch (Throwable t) {
+            XposedBridge.log(t);
+        }
+        try {
+            wm.updateViewLayout(root, params(true));
+        } catch (Throwable t) {
+            XposedBridge.log(t);
+        }
+        pill.ocultarRespuesta();
+        if (enviado) {
+            descartar(0f, -dp(30));
+        } else {
+            programarColapso(gen, 3500);
         }
     }
 
@@ -629,6 +750,23 @@ final class IslandController {
         pill.setAlpha(0f);
         pill.setScaleX(0.6f);
         pill.setScaleY(0.6f);
+        if (cfg.style == 1) {
+            // Cristal: aparece "desde cerca" y se enfoca
+            pill.setScaleX(1.14f);
+            pill.setScaleY(1.14f);
+            pill.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(cfg.ms(430))
+                    .setInterpolator(new DecelerateInterpolator(2f)).start();
+            pill.enfocar(cfg.ms(560));
+            return;
+        }
+        if (cfg.style == 2) {
+            // Neon: se enciende como un tubo, sin cambiar de tamaño
+            pill.setScaleX(1f);
+            pill.setScaleY(1f);
+            pill.setAlpha(1f);
+            pill.parpadeo();
+            return;
+        }
         TimeInterpolator ip = cfg.animStyle == 0 ? new DecelerateInterpolator(1.4f)
                 : new Muelle(5.5f, cfg.animStyle == 2 ? 1.5f : 1.0f);
         pill.animate().alpha(1f).scaleX(1f).scaleY(1f)
@@ -646,7 +784,20 @@ final class IslandController {
         if (cfg.haptic) vibrar(false);
         int eh = dp(IslandView.alturaDp(cfg, actual));
         float radio = Math.min(dp(cfg.radiusDp), eh / 2f);
-        switch (cfg.animStyle) {
+        if (cfg.style == 1) pill.enfocar(cfg.ms(520));
+        if (cfg.style == 2) pill.parpadeo();
+        switch (cfg.style == 0 ? cfg.animStyle : 10 + cfg.style) {
+            case 11:
+                // Cristal: movimiento lento y sedoso, sin rebote
+                animarRect(expW, eh, expTop, 0f, radio, cfg.ms(560),
+                        new DecelerateInterpolator(2.4f), new DecelerateInterpolator(2f), null, g);
+                break;
+            case 12:
+                // Neon: seco y rapido
+                animarRect(expW, eh, expTop, 0f, radio, cfg.ms(230),
+                        new android.view.animation.AccelerateDecelerateInterpolator(),
+                        new android.view.animation.AccelerateDecelerateInterpolator(), null, g);
+                break;
             case 0:
                 animarRect(expW, eh, expTop, 0f, radio, cfg.ms(340),
                         new DecelerateInterpolator(1.4f), new DecelerateInterpolator(1.4f), null, g);
@@ -718,7 +869,8 @@ final class IslandController {
 
     private void colapsar(final int g) {
         if (pill == null) return;
-        animarRect(compW, compH, compTop, compTx, compH / 2f, cfg.ms(260),
+        animarRect(compW, compH, compTop, compTx, compH / 2f,
+                cfg.ms(cfg.style == 1 ? 380 : cfg.style == 2 ? 190 : 260),
                 new DecelerateInterpolator(), new DecelerateInterpolator(),
                 new Runnable() {
                     @Override
@@ -755,8 +907,9 @@ final class IslandController {
             quitar();
             return;
         }
-        pill.animate().alpha(0f).scaleX(0.6f).scaleY(0.6f)
-                .setDuration(cfg.ms(200))
+        float fin = cfg.style == 1 ? 0.92f : cfg.style == 2 ? 1f : 0.6f;
+        pill.animate().alpha(0f).scaleX(fin).scaleY(fin)
+                .setDuration(cfg.ms(cfg.style == 1 ? 300 : cfg.style == 2 ? 150 : 200))
                 .setInterpolator(new AccelerateInterpolator())
                 .start();
         h.postDelayed(new Runnable() {
@@ -1049,6 +1202,7 @@ final class IslandController {
         shown = false;
         expanded = false;
         transitorio = false;
+        respondiendo = false;
         cancelarAnimaciones();
         try {
             if (root != null) wm.removeViewImmediate(root);
@@ -1124,7 +1278,7 @@ final class IslandController {
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 w, hh,
                 tipoVentana,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                (respondiendo ? 0 : WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -1171,7 +1325,7 @@ final class IslandController {
             @Override
             public void run() {
                 // Contestar o colgar: la notificacion de la llamada cambiara sola
-                if (esFijo(actual)) return;
+                if (esFijo(actual) || respondiendo) return;
                 descartar(0f, -dp(30));
             }
         });
