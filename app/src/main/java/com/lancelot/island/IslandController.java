@@ -80,6 +80,8 @@ final class IslandController {
     private final Context ctx;
     private final WindowManager wm;
     private final Handler h = new Handler(Looper.getMainLooper());
+    /** Cola de entrada: cancelarPasos() vacia h, y aqui no debe perderse ningun evento. */
+    private final Handler hp = new Handler(Looper.getMainLooper());
     private final float density;
 
     private IslaConfig cfg;
@@ -156,7 +158,7 @@ final class IslandController {
 
     /** Muestra un evento puntual (notificacion, carga, linterna...). */
     void show(final Evento e) {
-        h.post(new Runnable() {
+        hp.post(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -173,7 +175,7 @@ final class IslandController {
      * si no, nuevo indica si merece volver a aparecer (minimizada).
      */
     void progreso(final Evento e, final boolean nuevo) {
-        h.post(new Runnable() {
+        hp.post(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -193,7 +195,7 @@ final class IslandController {
 
     /** Fija (o quita, con null) la musica persistente. anunciar: expandir un momento. */
     void setMusica(final Evento m, final boolean anunciar) {
-        h.post(new Runnable() {
+        hp.post(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -207,7 +209,7 @@ final class IslandController {
 
     /** Fija (o quita, con null) la llamada, que tiene prioridad sobre la musica. */
     void setLlamada(final Evento l, final boolean anunciar) {
-        h.post(new Runnable() {
+        hp.post(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -221,7 +223,7 @@ final class IslandController {
 
     /** Fija (o quita, con null) el cronometro o temporizador de otra app. */
     void setCrono(final Evento l, final boolean anunciar) {
-        h.post(new Runnable() {
+        hp.post(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -235,7 +237,7 @@ final class IslandController {
 
     /** Fija (o quita, con null) la linterna: queda la capsula mientras este encendida. */
     void setLinterna(final Evento l, final boolean anunciar) {
-        h.post(new Runnable() {
+        hp.post(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -249,7 +251,7 @@ final class IslandController {
 
     /** Actualiza el contenido si ya se muestra un evento igual (porcentaje de carga). */
     void actualizarMismoTipo(final Evento e) {
-        h.post(new Runnable() {
+        hp.post(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -268,7 +270,7 @@ final class IslandController {
             i = inst;
         }
         if (i == null) return;
-        i.h.post(new Runnable() {
+        i.hp.post(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -293,7 +295,7 @@ final class IslandController {
 
     /** Pantalla encendida o apagada: con la pantalla apagada no queda nada dibujado. */
     void pantalla(final boolean on) {
-        h.post(new Runnable() {
+        hp.post(new Runnable() {
             @Override
             public void run() {
                 try {
