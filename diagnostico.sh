@@ -38,7 +38,8 @@ caso() {
 
 for ST in 0 1 2; do
   case $ST in 0) ESTILO=hyper;; 1) ESTILO=cristal;; 2) ESTILO=neon;; esac
-  NUEVA=$(printf '%s' "$CFG0" | sed "s/st=[0-9]/st=$ST/")
+  # nm=0: las notificaciones siempre expandidas, para ver el diseno completo
+  NUEVA=$(printf '%s' "$CFG0" | sed "s/st=[0-9]/st=$ST/; s/nm=[0-9]/nm=0/")
   case "$NUEVA" in *st=*) ;; *) NUEVA="${NUEVA};st=$ST";; esac
   su -c "settings put secure isla_config '$NUEVA'"
   sleep 3
@@ -49,7 +50,7 @@ for ST in 0 1 2; do
   caso notif 21 1.4 0
   caso notif_minimizada 20 1.2 0
   caso foto 29 1.4 0
-  caso mensajes 30 2.2 0
+  caso mensajes 30 3 0
   caso llamada 11 1.4 12
   caso descarga 13 1.4 0
   caso temporizador 27 1.4 28

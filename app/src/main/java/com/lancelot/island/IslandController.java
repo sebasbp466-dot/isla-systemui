@@ -379,8 +379,8 @@ final class IslandController {
         if (e.tipo != Evento.NOTIF) return false;
         if (e.pkg != null && cfg.isMin(e.pkg)) return true;
         if (cfg.notifMode == 1) return true;
-        if (cfg.noMolestarMin && enNoMolestar()) return true;
         if (cfg.notifMode == 0) return false;
+        if (cfg.noMolestarMin && enNoMolestar()) return true;
         boolean ocupada = fijo() != null || (shown && transitorio);
         boolean rafaga = ultimaNotif != 0
                 && SystemClock.elapsedRealtime() - ultimaNotif < 8000;
