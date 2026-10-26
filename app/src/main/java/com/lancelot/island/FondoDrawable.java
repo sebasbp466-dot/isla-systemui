@@ -225,7 +225,7 @@ final class FondoDrawable extends Drawable {
             // Cristal: humo oscuro translucido y, encima, una escarcha clara.
             // Con blur detras basta menos humo; sin blur se necesita mas cuerpo.
             int a = (color >>> 24) & 0xFF;
-            relleno.setColor((color & 0x00FFFFFF) | (Math.min(a, conBlur ? 0x66 : 0x99) << 24));
+            relleno.setColor((color & 0x00FFFFFF) | (Math.min(a, conBlur ? 0x70 : 0xE0) << 24));
             c.drawRoundRect(rf, r, r, relleno);
             relleno.setColor(conBlur ? 0x30D8E6FF : 0x26D8E6FF);
             c.drawRoundRect(rf, r, r, relleno);

@@ -363,6 +363,8 @@ final class IslandView extends LinearLayout {
      * del sistema; si la ROM no lo permite se queda el cristal translucido sin desenfoque.
      * Hay que llamarlo con la vista ya añadida a la ventana.
      */
+    private boolean blurPendiente;
+
     void activarBlur() {
         if (cfg.style != 1 || cfg.blurDp <= 0 || blur != null) {
             if (cfg.style == 1 && cfg.blurDp <= 0) estadoBlur = "desactivado en ajustes";
@@ -373,7 +375,27 @@ final class IslandView extends LinearLayout {
             gv.setAccessible(true);
             Object vri = gv.invoke(this);
             if (vri == null) {
-                estadoBlur = "sin ViewRootImpl";
+                estadoBlur = "esperando a que la vista este en la ventana";
+                if (!blurPendiente) {
+                    blurPendiente = true;
+                    addOnAttachStateChangeListener(new OnAttachStateChangeListener() {
+                        @Override
+                        public void onViewAttachedToWindow(View v) {
+                            removeOnAttachStateChangeListener(this);
+                            blurPendiente = false;
+                            post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    activarBlur();
+                                }
+                            });
+                        }
+
+                        @Override
+                        public void onViewDetachedFromWindow(View v) {
+                        }
+                    });
+                }
                 return;
             }
             java.lang.reflect.Method crear = vri.getClass().getDeclaredMethod(
@@ -402,9 +424,11 @@ final class IslandView extends LinearLayout {
             fondo.setConBlur(true);
             setBackground(new LayerDrawable(new Drawable[]{d, fondo}));
             estadoBlur = "activo (" + cfg.blurDp + " dp)";
+            de.robv.android.xposed.XposedBridge.log("[IslaSystemUI] blur=" + estadoBlur);
         } catch (Throwable t) {
             blur = null;
             estadoBlur = "no disponible: " + t.getClass().getSimpleName();
+            de.robv.android.xposed.XposedBridge.log("[IslaSystemUI] blur=" + estadoBlur + " " + t);
         }
     }
 
