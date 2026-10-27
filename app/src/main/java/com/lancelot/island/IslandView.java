@@ -38,7 +38,7 @@ final class IslandView extends LinearLayout {
                     || e.tipo == Evento.VOLUMEN) {
                 h += 14;
             }
-            if (e.botonTxt != null && e.botonTxt.length > 0) h += 46;
+            if (e.botonTxt != null && e.botonTxt.length > 0 && !usaCirculos(cfg, e)) h += 46;
             if (e.tipo == Evento.NOTIF && e.app != null && e.app.length() > 0) h += 8;
         }
         return h;
@@ -60,6 +60,8 @@ final class IslandView extends LinearLayout {
     private final GlyphView glifo;
     private final View hueco;
     private final LinearLayout textos;
+    private final GlyphView glifoDer;
+    private final LinearLayout circulos;
     private final TextView titulo;
     private final TextView leyenda;
     private final ImageView miniatura;
@@ -210,6 +212,19 @@ final class IslandView extends LinearLayout {
         fila.addView(derecha, new LinearLayout.LayoutParams(
                 LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
         derecha.setVisibility(GONE);
+
+        glifoDer = new GlyphView(ctx);
+        LinearLayout.LayoutParams gdl = new LinearLayout.LayoutParams(dp(20), dp(20));
+        gdl.setMarginStart(dp(6));
+        fila.addView(glifoDer, gdl);
+        glifoDer.setVisibility(GONE);
+
+        circulos = new LinearLayout(ctx);
+        circulos.setOrientation(HORIZONTAL);
+        circulos.setGravity(Gravity.CENTER_VERTICAL);
+        fila.addView(circulos, new LinearLayout.LayoutParams(
+                LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
+        circulos.setVisibility(GONE);
 
         // ---- parte inferior (musica, carga, progreso, botones)
         inferior = new LinearLayout(ctx);
@@ -586,6 +601,70 @@ final class IslandView extends LinearLayout {
         }
     }
 
+    /** Xiaomi / iPhone: los botones de llamada y temporizador son circulos a la derecha. */
+    static boolean usaCirculos(IslaConfig cfg, Evento e) {
+        return cfg.style >= 3 && e != null && (e.tipo == Evento.LLAMADA || e.tipo == Evento.CRONO)
+                && e.botonTxt != null && e.botonTxt.length > 0;
+    }
+
+    private void construirCirculos(final Evento e, boolean ver) {
+        circulos.removeAllViews();
+        if (!ver) {
+            circulos.setVisibility(GONE);
+            return;
+        }
+        circulos.setVisibility(VISIBLE);
+        for (int i = 0; i < e.botonTxt.length; i++) {
+            final int idx = i;
+            String t = String.valueOf(e.botonTxt[i]).toLowerCase(java.util.Locale.ROOT);
+            boolean cuelga = t.contains("rech") || t.contains("colg") || t.contains("decl")
+                    || t.contains("hang") || t.contains("end") || t.contains("reject")
+                    || t.contains("detener") || t.contains("stop") || t.contains("termin");
+            boolean contesta = t.contains("contest") || t.contains("answer") || t.contains("acept")
+                    || t.contains("accept") || t.contains("atend");
+            int col = e.botonColor != null && i < e.botonColor.length ? e.botonColor[i]
+                    : 0xFF3A3A40;
+            GradientDrawable fondoC = new GradientDrawable();
+            fondoC.setShape(GradientDrawable.OVAL);
+            fondoC.setColor(col);
+            View v;
+            if (cuelga || contesta) {
+                GlyphView g = new GlyphView(getContext());
+                g.set(cuelga ? GlyphView.COLGAR : GlyphView.TELEFONO, 0f, false, 0, 0xFFFFFFFF);
+                g.setPadding(dp(9), dp(9), dp(9), dp(9));
+                v = g;
+            } else {
+                TextView tv = new TextView(getContext());
+                tv.setText(e.botonTxt[i]);
+                tv.setTextColor(Color.WHITE);
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+                tv.setTypeface(Typeface.DEFAULT_BOLD);
+                tv.setGravity(Gravity.CENTER);
+                tv.setSingleLine(true);
+                v = tv;
+            }
+            v.setBackground(fondoC);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(40), dp(40));
+            lp.setMarginStart(dp(8));
+            circulos.addView(v, lp);
+            v.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View x) {
+                    Evento actual = ev;
+                    if (actual != null && actual.botonRun != null && idx < actual.botonRun.length
+                            && actual.botonRun[idx] != null) {
+                        try {
+                            actual.botonRun[idx].run();
+                        } catch (Throwable ignorado) {
+                            // un boton que falla no debe tumbar SystemUI
+                        }
+                    }
+                    if (alBoton != null) alBoton.run();
+                }
+            });
+        }
+    }
+
     private ValueAnimator difAnim;
 
     /** Desenfoca el contenido (no el fondo) y lo va aclarando, como en Hyper Island. */
@@ -733,8 +812,17 @@ final class IslandView extends LinearLayout {
 
         // ---- icono o glifo
         boolean usaGlifo = e.glifo != 0 || (e.icono == null && e.tipo == Evento.MUSICA);
-        boolean conIcono = usaGlifo || cfg.showIcon;
+        final boolean pct = bn && e.nivel >= 0 && (e.tipo == Evento.CARGA
+                || e.tipo == Evento.BATERIA || e.tipo == Evento.VOLUMEN);
+        boolean conIcono = (usaGlifo || cfg.showIcon) && !pct;
         iconoFrame.setVisibility(conIcono ? VISIBLE : GONE);
+        if (pct) {
+            glifoDer.setVisibility(VISIBLE);
+            glifoDer.set(e.glifo != 0 ? e.glifo : GlyphView.RAYO, 0f, e.activo, e.sub, e.color);
+            if (animar) glifoDer.entrada();
+        } else {
+            glifoDer.setVisibility(GONE);
+        }
         int lado = ex ? Math.max(dp(32), dp(cfg.heightDp - 28))
                 : dp(bn ? 22 : dividido ? 20 : 22);
         LinearLayout.LayoutParams ilp = (LinearLayout.LayoutParams) iconoFrame.getLayoutParams();
@@ -781,7 +869,7 @@ final class IslandView extends LinearLayout {
         boolean cambioTexto = ultTitulo != null && (!tit.equals(ultTitulo) || !txt.equals(ultTexto));
         ultTitulo = tit;
         ultTexto = txt;
-        titulo.setText(e.titulo);
+        titulo.setText(bn && !pct ? "" : e.titulo);
         titulo.setTextSize(TypedValue.COMPLEX_UNIT_SP, bn ? 13 : ex ? 14 : 12);
         // Texto largo: en expandido se desplaza una vez para poder leerlo entero
         titulo.setEllipsize(ex ? TextUtils.TruncateAt.MARQUEE : TextUtils.TruncateAt.END);
@@ -835,7 +923,9 @@ final class IslandView extends LinearLayout {
             valor.setEllipsize(TextUtils.TruncateAt.END);
             boolean porc = e.nivel >= 0 && (e.tipo == Evento.CARGA || e.tipo == Evento.BATERIA
                     || e.tipo == Evento.VOLUMEN);
-            valor.setText(porc ? e.nivel + "%" : String.valueOf(e.texto));
+            String der = String.valueOf(e.titulo);
+            if (!TextUtils.isEmpty(e.texto)) der = der + " \u00B7 " + e.texto;
+            valor.setText(porc ? e.nivel + "%" : der);
         } else if (e.tipo == Evento.MUSICA) {
             derecha.setVisibility(VISIBLE);
             ecual.setVisibility(VISIBLE);
@@ -901,7 +991,9 @@ final class IslandView extends LinearLayout {
         fondo.setProgreso(e.color, conBorde ? e.nivel / 100f : -1f);
 
         // ---- parte inferior
-        boolean conBotones = ex && e.botonTxt != null && e.botonTxt.length > 0;
+        final boolean circ = ex && usaCirculos(cfg, e);
+        boolean conBotones = ex && e.botonTxt != null && e.botonTxt.length > 0 && !circ;
+        construirCirculos(e, circ);
         boolean conBarra = ex && (e.tipo == Evento.MUSICA || e.tipo == Evento.CARGA
                 || e.tipo == Evento.PROGRESO || e.tipo == Evento.VOLUMEN);
         if (!conBarra && !conBotones) {

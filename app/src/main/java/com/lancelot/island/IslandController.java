@@ -341,7 +341,7 @@ final class IslandController {
     }
 
     private int idleW() {
-        return dividido ? cutW + dp(14) : dp(64);
+        return compW; // el ancho de la isla permanente es el ancho compacto de los ajustes
     }
 
     /** Capsula compacta: del tamaño del notch si esta vacia, del normal si lleva contenido. */
@@ -870,7 +870,7 @@ final class IslandController {
         if (actual.botonTxt != null && actual.botonTxt.length > 0 && actual.tipo != Evento.LLAMADA) {
             ms = Math.max(ms, 6000);
         }
-        if (bn && ms > 2800) ms = 2800;
+        if (bn) ms = Math.min(ms, cfg.style == 3 ? 3200 : 2800);
         colapsoMs = ms;
         if (ms > 0) programarColapso(g, ms);
     }
