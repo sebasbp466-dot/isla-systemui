@@ -28,7 +28,7 @@ final class IslaConfig {
     int bodyColor = 0xFFCCCCCC;
     boolean showIcon = true;
     String blocked = "";
-    /** 0 = Hyper (negro mate con aura), 1 = Cristal (vidrio), 2 = Neon (borde de luz) */
+    /** 0 Hyper, 1 Cristal, 2 Neon, 3 Xiaomi (Hyper Island), 4 iPhone */
     int style = 0;
     /** Ancho minimo de la capsula compacta, en dp. */
     int compactW = 110;
@@ -75,6 +75,8 @@ final class IslaConfig {
     /** Con No molestar activo, las notificaciones llegan minimizadas. */
     boolean noMolestarMin = true;
     /** Doble toque rapido: descarta la isla. */
+    /** Isla permanente: queda siempre una capsula oscura alrededor del notch. */
+    boolean permanente = false;
     boolean dobleToque = true;
     /** Experimental: no mostrar la isla cuando la barra de estado esta oculta. */
     boolean ocultarFs = false;
@@ -216,7 +218,7 @@ final class IslaConfig {
                         blocked = limpiar(v);
                         break;
                     case "st":
-                        style = clamp(Integer.parseInt(v), 0, 2);
+                        style = clamp(Integer.parseInt(v), 0, 4);
                         break;
                     case "cm":
                         compactW = clamp(Integer.parseInt(v), 90, 200);
@@ -299,6 +301,9 @@ final class IslaConfig {
                     case "fs":
                         ocultarFs = "1".equals(v);
                         break;
+                    case "pm":
+                        permanente = "1".equals(v);
+                        break;
                     case "dt":
                         dobleToque = "1".equals(v);
                         break;
@@ -366,6 +371,7 @@ final class IslaConfig {
                 + ";xr=" + b(fCrono)
                 + ";bp=" + b(progBorde)
                 + ";nd=" + b(noMolestarMin)
+                + ";pm=" + b(permanente)
                 + ";dt=" + b(dobleToque)
                 + ";fs=" + b(ocultarFs)
                 + ";sl=" + b(silencio)

@@ -22,6 +22,8 @@ final class Evento {
     static final int VOLUMEN = 11;
     static final int PORTAPAPELES = 12;
     static final int CRONO = 13;
+    /** Capsula vacia de la isla permanente (no se expande). */
+    static final int IDLE = 14;
 
     final int tipo;
     CharSequence titulo = "";

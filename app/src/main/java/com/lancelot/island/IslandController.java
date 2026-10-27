@@ -284,7 +284,11 @@ final class IslandController {
 
     private void rehacerConConfig() {
         cfg = IslaConfig.get(ctx);
-        if (!shown || pill == null || cfgPill == cfg) return;
+        if (!shown) {
+            restaurarFijo();
+            return;
+        }
+        if (pill == null || cfgPill == cfg) return;
         // La isla se dibuja con los ajustes con los que nacio: hay que construirla otra vez
         ArrayList<Evento> guardados = new ArrayList<>(recientes);
         cancelarPasos();
@@ -322,8 +326,36 @@ final class IslandController {
         return null;
     }
 
+    private Evento idleEv;
+
+    /** Lo fijo que toque mostrar; si no hay nada y la isla es permanente, la capsula vacia. */
+    private Evento fijoIdle() {
+        Evento f = fijo();
+        if (f != null) return f;
+        cfg = IslaConfig.get(ctx);
+        if (cfg.enabled && cfg.permanente && pantallaOn && !horizontalOculto()) {
+            if (idleEv == null) idleEv = new Evento(Evento.IDLE);
+            return idleEv;
+        }
+        return null;
+    }
+
+    private int idleW() {
+        return dividido ? cutW + dp(14) : dp(64);
+    }
+
+    /** Capsula compacta: del tamaño del notch si esta vacia, del normal si lleva contenido. */
+    private void ajustarCompacta(Evento e) {
+        if (pill == null || expanded) return;
+        int w = e != null && e.tipo == Evento.IDLE ? idleW() : compW;
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) pill.getLayoutParams();
+        if (lp.width == w) return;
+        animarRect(w, compH, compTop, compTx, compH / 2f, cfg.ms(260),
+                new DecelerateInterpolator(1.6f), new DecelerateInterpolator(1.6f), null, gen);
+    }
+
     private boolean esFijo(Evento e) {
-        return e != null && (e.tipo == Evento.MUSICA || e.tipo == Evento.LLAMADA
+        return e != null && (e.tipo == Evento.IDLE || e.tipo == Evento.MUSICA || e.tipo == Evento.LLAMADA
                 || e.tipo == Evento.LINTERNA || e.tipo == Evento.CRONO);
     }
 
@@ -461,8 +493,10 @@ final class IslandController {
                 expandir(g);
             } else {
                 pill.configurar(e, false, false);
+                ajustarCompacta(e);
                 pill.destello(e.color);
                 if (cfg.style == 0) gota();
+                if (cfg.style >= 3) pill.difuminar(10f, 0f, cfg.ms(260));
                 if (min) {
                     programarColapso(g, e.duracionMs > 0 ? e.duracionMs : minimaMs());
                 } else {
@@ -706,6 +740,7 @@ final class IslandController {
             anunciarFijo();
         } else if (pill != null) {
             pill.configurar(m, expanded, false);
+            ajustarCompacta(m);
         }
     }
 
@@ -729,7 +764,7 @@ final class IslandController {
 
     /** Vuelve a la capsula fija si la hay; si no, quita la isla. */
     private void restaurarFijo() {
-        Evento f = fijo();
+        Evento f = fijoIdle();
         if (f == null) {
             if (shown && !transitorio) {
                 cancelarPasos();
@@ -743,6 +778,7 @@ final class IslandController {
         } else if (pill != null) {
             actual = f;
             pill.configurar(f, false, false);
+            ajustarCompacta(f);
         }
     }
 
@@ -782,33 +818,49 @@ final class IslandController {
         pill.configurar(actual, true, true);
         pill.destello(actual.color);
         if (cfg.haptic) vibrar(false);
-        int eh = dp(IslandView.alturaDp(cfg, actual));
-        float radio = Math.min(dp(cfg.radiusDp), eh / 2f);
+        final boolean bn = IslandView.esBanner(cfg, actual);
+        int eh = bn ? compH + dp(8) : dp(IslandView.alturaDp(cfg, actual));
+        float radio = bn ? eh / 2f : Math.min(dp(cfg.radiusDp), eh / 2f);
+        int ew = bn ? Math.min(expW, Math.max(dp(236), (dividido ? cutW : 0) + dp(210))) : expW;
+        int et = bn ? Math.max(0, compTop - dp(4)) : expTop;
+        float etx = bn ? compTx : 0f;
         if (cfg.style == 1) pill.enfocar(cfg.ms(520));
         if (cfg.style == 2) pill.parpadeo();
+        if (cfg.style == 3) pill.difuminar(14f, 0f, cfg.ms(320));
+        if (cfg.style == 4) pill.difuminar(10f, 0f, cfg.ms(280));
         switch (cfg.style == 0 ? cfg.animStyle : 10 + cfg.style) {
+            case 13:
+                // Xiaomi: crece desde la capsula con el contenido desenfocado
+                animarRect(ew, eh, et, etx, radio, cfg.ms(400),
+                        new DecelerateInterpolator(1.8f), new DecelerateInterpolator(1.8f), null, g);
+                break;
+            case 14:
+                // iPhone: resorte con rebote
+                animarRect(ew, eh, et, etx, radio, cfg.ms(560),
+                        new Muelle(5.6f, 1.25f), new Muelle(5.6f, 1.25f), null, g);
+                break;
             case 11:
                 // Cristal: movimiento lento y sedoso, sin rebote
-                animarRect(expW, eh, expTop, 0f, radio, cfg.ms(560),
+                animarRect(ew, eh, et, etx, radio, cfg.ms(560),
                         new DecelerateInterpolator(2.4f), new DecelerateInterpolator(2f), null, g);
                 break;
             case 12:
                 // Neon: seco y rapido
-                animarRect(expW, eh, expTop, 0f, radio, cfg.ms(230),
+                animarRect(ew, eh, et, etx, radio, cfg.ms(230),
                         new android.view.animation.AccelerateDecelerateInterpolator(),
                         new android.view.animation.AccelerateDecelerateInterpolator(), null, g);
                 break;
             case 0:
-                animarRect(expW, eh, expTop, 0f, radio, cfg.ms(340),
+                animarRect(ew, eh, et, etx, radio, cfg.ms(340),
                         new DecelerateInterpolator(1.4f), new DecelerateInterpolator(1.4f), null, g);
                 break;
             case 2:
                 // Elastico: ancho y alto rebotan con distinta frecuencia (efecto gelatina)
-                animarRect(expW, eh, expTop, 0f, radio, cfg.ms(560),
+                animarRect(ew, eh, et, etx, radio, cfg.ms(560),
                         new Muelle(5.2f, 1.5f), new Muelle(4.6f, 1.15f), null, g);
                 break;
             default:
-                animarRect(expW, eh, expTop, 0f, radio, cfg.ms(460),
+                animarRect(ew, eh, et, etx, radio, cfg.ms(460),
                         new Muelle(6f, 1.0f), new Muelle(6f, 1.0f), null, g);
                 break;
         }
@@ -818,6 +870,7 @@ final class IslandController {
         if (actual.botonTxt != null && actual.botonTxt.length > 0 && actual.tipo != Evento.LLAMADA) {
             ms = Math.max(ms, 6000);
         }
+        if (bn && ms > 2800) ms = 2800;
         colapsoMs = ms;
         if (ms > 0) programarColapso(g, ms);
     }
@@ -869,8 +922,10 @@ final class IslandController {
 
     private void colapsar(final int g) {
         if (pill == null) return;
-        animarRect(compW, compH, compTop, compTx, compH / 2f,
-                cfg.ms(cfg.style == 1 ? 380 : cfg.style == 2 ? 190 : 260),
+        if (cfg.style >= 3) pill.difuminar(0f, 12f, cfg.ms(200));
+        animarRect(actual != null && actual.tipo == Evento.IDLE ? idleW() : compW, compH,
+                compTop, compTx, compH / 2f,
+                cfg.ms(cfg.style == 1 ? 380 : cfg.style == 2 ? 190 : cfg.style >= 3 ? 320 : 260),
                 new DecelerateInterpolator(), new DecelerateInterpolator(),
                 new Runnable() {
                     @Override
@@ -886,11 +941,12 @@ final class IslandController {
     /** Termina un evento puntual: vuelve a la capsula fija o se va. */
     private void despuesDeColapsar(final int g, int esperaMs) {
         if (pill == null) return;
-        Evento f = fijo();
+        Evento f = fijoIdle();
         if (f != null) {
             actual = f;
             transitorio = false;
             pill.configurar(f, false, false);
+            ajustarCompacta(f);
         } else {
             pill.configurar(actual, false, false);
             h.postDelayed(new Runnable() {
@@ -925,6 +981,10 @@ final class IslandController {
         cancelarPasos();
         final int g = gen;
         if (pill == null) return;
+        if (actual != null && actual.tipo == Evento.IDLE) {
+            pill.animate().translationX(compTx).translationY(0f).setDuration(120).start();
+            return;
+        }
 
         if (expanded && esFijo(actual)) {
             // La musica o la llamada expandida solo se encoge
@@ -958,7 +1018,7 @@ final class IslandController {
     private long ultimoToque;
 
     private void tocar() {
-        if (pill == null || actual == null) return;
+        if (pill == null || actual == null || actual.tipo == Evento.IDLE) return;
         long ahora = SystemClock.elapsedRealtime();
         boolean doble = cfg.dobleToque && ahora - ultimoToque < 350;
         ultimoToque = ahora;
@@ -999,7 +1059,7 @@ final class IslandController {
 
     /** Mantener pulsado: expande y, en notificaciones, abre el panel de acciones. */
     private void largo() {
-        if (pill == null || actual == null) return;
+        if (pill == null || actual == null || actual.tipo == Evento.IDLE) return;
         vibrar(true);
         Evento a = actual;
         if (a.tipo == Evento.MUSICA) {
@@ -1406,12 +1466,13 @@ final class IslandController {
             }
         });
 
+        int ancho0 = e != null && e.tipo == Evento.IDLE ? idleW() : compW;
         FrameLayout.LayoutParams plp = new FrameLayout.LayoutParams(
-                compW, compH, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+                ancho0, compH, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         plp.topMargin = compTop;
         root.addView(pill, plp);
         pill.setTranslationX(compTx);
-        pill.setPivotX(compW / 2f);
+        pill.setPivotX(ancho0 / 2f);
         pill.setPivotY(0f);
 
         ventanaGrande = false;

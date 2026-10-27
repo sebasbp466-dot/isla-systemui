@@ -123,6 +123,13 @@ final class FondoDrawable extends Drawable {
             rebordeG = new LinearGradient(0f, 0f, 0f, 1f,
                     new int[]{0x14FFFFFF, 0x04FFFFFF}, null, Shader.TileMode.CLAMP);
             reflejoG = null;
+        } else if (estilo == 4) {
+            // iPhone: negro puro, sin borde ni brillo
+            degradado = new LinearGradient(0f, 0f, 0f, 1f,
+                    new int[]{0x00000000, 0x00000000}, null, Shader.TileMode.CLAMP);
+            rebordeG = new LinearGradient(0f, 0f, 0f, 1f,
+                    new int[]{0x0CFFFFFF, 0x04FFFFFF}, null, Shader.TileMode.CLAMP);
+            reflejoG = null;
         } else {
             degradado = new LinearGradient(0f, 0f, 0f, 1f,
                     new int[]{0x0CFFFFFF, 0x00FFFFFF, 0x00000000},
@@ -187,6 +194,7 @@ final class FondoDrawable extends Drawable {
      */
     void setAura(int c, float nivel) {
         if (estilo == 0 && !colorVivo(c)) nivel = 0f; // Hyper solo emite luz de colores
+        if (estilo >= 3) nivel = 0f; // Xiaomi y iPhone: negro limpio, sin luz interior
         if (estilo == 2) neonColor = c;
         if (nivel <= 0f) {
             if (auraNivel != 0f) {

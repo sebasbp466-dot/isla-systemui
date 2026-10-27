@@ -131,7 +131,7 @@ final class IslandView extends LinearLayout {
                 // Hyper: esquinas a un cuarto del tamaño (especificacion de Xiaomi).
                 // Cristal: circulo, como una lente.
                 outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(),
-                        view.getWidth() / (cfg.style == 1 ? 2f : cfg.style == 2 ? 3f : 4f));
+                        view.getWidth() / (cfg.style == 1 || cfg.style == 4 ? 2f : cfg.style == 2 ? 3f : 4f));
             }
         });
         glifo = new GlyphView(ctx);
@@ -140,12 +140,12 @@ final class IslandView extends LinearLayout {
         fila.addView(iconoFrame, new LinearLayout.LayoutParams(dp(22), dp(22)));
 
         hueco = new View(ctx);
-        fila.addView(hueco, new LinearLayout.LayoutParams(0, 1, 1f));
 
         textos = new LinearLayout(ctx);
         textos.setOrientation(VERTICAL);
         textos.setGravity(Gravity.CENTER_VERTICAL);
         fila.addView(textos, new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
+        fila.addView(hueco, new LinearLayout.LayoutParams(0, 1, 1f));
 
         leyenda = new TextView(ctx);
         leyenda.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
@@ -158,7 +158,8 @@ final class IslandView extends LinearLayout {
 
         titulo = new TextView(ctx);
         titulo.setTextColor(cfg.titleColor);
-        titulo.setTypeface(Typeface.create(cfg.style == 1 ? "sans-serif" : "sans-serif-medium",
+        titulo.setTypeface(Typeface.create(cfg.style == 1 || cfg.style == 4 ? "sans-serif"
+                : "sans-serif-medium",
                 Typeface.BOLD));
         titulo.setSingleLine(true);
         titulo.setEllipsize(TextUtils.TruncateAt.END);
@@ -567,13 +568,73 @@ final class IslandView extends LinearLayout {
         }
     }
 
+    /** Xiaomi y iPhone muestran los avisos del sistema como un banner de una sola fila. */
+    static boolean esBanner(IslaConfig cfg, Evento e) {
+        if (cfg.style < 3 || e == null) return false;
+        switch (e.tipo) {
+            case Evento.CARGA:
+            case Evento.TIMBRE:
+            case Evento.AURIC:
+            case Evento.BATERIA:
+            case Evento.AJUSTE:
+            case Evento.VOLUMEN:
+            case Evento.PRIVACIDAD:
+            case Evento.PORTAPAPELES:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private ValueAnimator difAnim;
+
+    /** Desenfoca el contenido (no el fondo) y lo va aclarando, como en Hyper Island. */
+    void difuminar(float de, final float a, int ms) {
+        if (android.os.Build.VERSION.SDK_INT < 31) return;
+        if (difAnim != null) difAnim.cancel();
+        difAnim = ValueAnimator.ofFloat(de, a);
+        difAnim.setDuration(ms);
+        difAnim.setInterpolator(new android.view.animation.DecelerateInterpolator(1.4f));
+        difAnim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator va) {
+                aplicarDifuminado((Float) va.getAnimatedValue());
+            }
+        });
+        difAnim.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                aplicarDifuminado(a);
+            }
+        });
+        difAnim.start();
+    }
+
+    void difuminarYa() {
+        if (difAnim != null) difAnim.cancel();
+        aplicarDifuminado(0f);
+    }
+
+    private void aplicarDifuminado(float px) {
+        if (android.os.Build.VERSION.SDK_INT < 31) return;
+        try {
+            android.graphics.RenderEffect fx = px < 0.5f ? null
+                    : android.graphics.RenderEffect.createBlurEffect(px, px,
+                    android.graphics.Shader.TileMode.CLAMP);
+            fila.setRenderEffect(fx);
+            inferior.setRenderEffect(fx);
+        } catch (Throwable t) {
+            // sin desenfoque de contenido
+        }
+    }
+
     boolean isExpandido() {
         return expandido;
     }
 
     /** Cometa de luz del color del evento que da una vuelta al borde de la isla. */
     void destello(final int color) {
-        if (!cfg.glow) return;
+        if (!cfg.glow || cfg.style >= 3) return;
         if (luzAnim != null) luzAnim.cancel();
         luzAnim = ValueAnimator.ofFloat(0f, 1f);
         luzAnim.setDuration(cfg.ms(cfg.style == 1 ? 1100 : cfg.style == 2 ? 900 : 1500));
@@ -633,22 +694,31 @@ final class IslandView extends LinearLayout {
     void configurar(final Evento e, boolean ex, boolean animar) {
         ev = e;
         expandido = ex;
-        if (!animar) reposo();
+        final boolean exOrig = ex;
+        final boolean idle = e != null && e.tipo == Evento.IDLE;
+        final boolean bn = ex && esBanner(cfg, e);
+        if (bn) ex = false;
+        if (!animar) {
+            reposo();
+            difuminarYa();
+        }
         if (contador != null) {
             contador.cancel();
             contador = null;
         }
         crono.stop();
-        final boolean dividido = !ex && cutoutPx > 0;
+        final boolean dividido = !ex && !bn && cutoutPx > 0;
 
         // ---- espacios
         if (ex) {
             setPadding(dp(14), dp(10), dp(16), dp(10));
+        } else if (bn) {
+            setPadding(dp(14), 0, dp(16), 0);
         } else {
             setPadding(dp(dividido ? 10 : 9), 0, dp(10), 0);
         }
 
-        if (e == null) {
+        if (e == null || idle) {
             actualizarAura(null, ex);
             fondo.setProgreso(0, -1f);
             iconoFrame.setVisibility(GONE);
@@ -659,13 +729,14 @@ final class IslandView extends LinearLayout {
             return;
         }
 
-        actualizarAura(e, ex);
+        actualizarAura(e, exOrig);
 
         // ---- icono o glifo
         boolean usaGlifo = e.glifo != 0 || (e.icono == null && e.tipo == Evento.MUSICA);
         boolean conIcono = usaGlifo || cfg.showIcon;
         iconoFrame.setVisibility(conIcono ? VISIBLE : GONE);
-        int lado = ex ? Math.max(dp(32), dp(cfg.heightDp - 28)) : dp(dividido ? 20 : 22);
+        int lado = ex ? Math.max(dp(32), dp(cfg.heightDp - 28))
+                : dp(bn ? 22 : dividido ? 20 : 22);
         LinearLayout.LayoutParams ilp = (LinearLayout.LayoutParams) iconoFrame.getLayoutParams();
         ilp.width = lado;
         ilp.height = lado;
@@ -676,7 +747,7 @@ final class IslandView extends LinearLayout {
             int tipoGlifo = e.glifo != 0 ? e.glifo : GlyphView.NOTA;
             glifo.set(tipoGlifo, e.nivel < 0 ? 0f : e.nivel / 100f, e.activo, e.sub, e.color);
             // El glifo se anima al expandir; si ya esta activo tambien en compacto (llamada, descarga)
-            if (animar && ex) {
+            if (animar && exOrig) {
                 glifo.entrada();
             } else if (e.activo && (e.tipo == Evento.LLAMADA || e.tipo == Evento.PROGRESO
                     || e.tipo == Evento.PRIVACIDAD)) {
@@ -690,12 +761,17 @@ final class IslandView extends LinearLayout {
 
         // ---- textos o hueco para el notch
         textos.setVisibility(dividido ? GONE : VISIBLE);
-        hueco.setVisibility(dividido ? VISIBLE : GONE);
-        if (dividido) {
-            LinearLayout.LayoutParams hlp = (LinearLayout.LayoutParams) hueco.getLayoutParams();
+        boolean huecoBn = bn && cutoutPx > 0;
+        hueco.setVisibility(dividido || huecoBn ? VISIBLE : GONE);
+        LinearLayout.LayoutParams hlp = (LinearLayout.LayoutParams) hueco.getLayoutParams();
+        if (huecoBn) {
+            hlp.width = cutoutPx + dp(14);
+            hlp.weight = 0f;
+        } else {
             hlp.width = 0;
-            hueco.setLayoutParams(hlp);
+            hlp.weight = 1f;
         }
+        hueco.setLayoutParams(hlp);
         LinearLayout.LayoutParams tlp = (LinearLayout.LayoutParams) textos.getLayoutParams();
         tlp.setMarginStart(conIcono ? (ex ? dp(12) : dp(8)) : dp(4));
         textos.setLayoutParams(tlp);
@@ -706,7 +782,7 @@ final class IslandView extends LinearLayout {
         ultTitulo = tit;
         ultTexto = txt;
         titulo.setText(e.titulo);
-        titulo.setTextSize(TypedValue.COMPLEX_UNIT_SP, ex ? 14 : 12);
+        titulo.setTextSize(TypedValue.COMPLEX_UNIT_SP, bn ? 13 : ex ? 14 : 12);
         // Texto largo: en expandido se desplaza una vez para poder leerlo entero
         titulo.setEllipsize(ex ? TextUtils.TruncateAt.MARQUEE : TextUtils.TruncateAt.END);
         titulo.setSelected(ex);
@@ -724,7 +800,13 @@ final class IslandView extends LinearLayout {
         boolean conFoto = ex && e.imagen != null;
         miniatura.setVisibility(conFoto ? VISIBLE : GONE);
         if (conFoto) miniatura.setImageDrawable(e.imagen);
-        if (cambioTexto && ex && !animar) {
+        if (cambioTexto && (ex || bn) && !animar && cfg.style >= 3) {
+            // Xiaomi / iPhone: el contenido se desenfoca al cambiar
+            textos.animate().cancel();
+            textos.setAlpha(1f);
+            textos.setTranslationX(0f);
+            difuminar(10f, 0f, cfg.ms(240));
+        } else if (cambioTexto && ex && !animar) {
             // Fundido corto cuando el texto cambia sin que cambie el evento
             textos.setAlpha(0.15f);
             textos.setTranslationX(dp(16));
@@ -742,7 +824,19 @@ final class IslandView extends LinearLayout {
         crono.setVisibility(GONE);
         anillo.setVisibility(GONE);
         derecha.setVisibility(GONE);
-        if (e.tipo == Evento.MUSICA) {
+        if (bn) {
+            // Banner de estado: titulo a la izquierda, valor a la derecha (la camara en medio)
+            derecha.setVisibility(VISIBLE);
+            valor.setVisibility(VISIBLE);
+            valor.setTextColor(e.color);
+            valor.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            valor.setMaxWidth(dp(150));
+            valor.setSingleLine(true);
+            valor.setEllipsize(TextUtils.TruncateAt.END);
+            boolean porc = e.nivel >= 0 && (e.tipo == Evento.CARGA || e.tipo == Evento.BATERIA
+                    || e.tipo == Evento.VOLUMEN);
+            valor.setText(porc ? e.nivel + "%" : String.valueOf(e.texto));
+        } else if (e.tipo == Evento.MUSICA) {
             derecha.setVisibility(VISIBLE);
             ecual.setVisibility(VISIBLE);
             ecual.setColor(e.color);

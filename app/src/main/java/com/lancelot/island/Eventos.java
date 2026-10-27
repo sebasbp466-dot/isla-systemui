@@ -96,6 +96,7 @@ final class Eventos {
         try {
             registrar();
             XposedBridge.log(TAG + "eventos iniciados");
+            isla().pantalla(true);
         } catch (Throwable t) {
             XposedBridge.log(t);
         }

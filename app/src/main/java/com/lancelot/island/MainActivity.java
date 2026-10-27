@@ -305,7 +305,7 @@ public class MainActivity extends Activity {
 
         // ---- Estilo de la isla
         LinearLayout s = tarjeta(col, "Estilo de la isla");
-        segmentado(s, new String[]{"Hyper", "Cristal", "Neón"}, cfg.style,
+        segmentado(s, new String[]{"Hyper", "Cristal", "Neón", "Xiaomi", "iPhone"}, cfg.style,
                 new IntSetter() {
             @Override
             public void set(int v) {
@@ -357,6 +357,13 @@ public class MainActivity extends Activity {
                     public void set(int v) {
                         cfg.progBorde = v == 1;
                         refrescar();
+                    }
+                });
+        interruptor(s, "Isla permanente (siempre alrededor del notch)", cfg.permanente,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.permanente = v == 1;
                     }
                 });
         interruptor(s, "Ocultar en pantalla completa (experimental)", cfg.ocultarFs,
