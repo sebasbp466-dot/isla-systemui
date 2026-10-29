@@ -220,6 +220,35 @@ public class MainActivity extends Activity {
 
     // ------------------------------------------------------------------ interfaz
 
+    private final android.os.Handler hAuto = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable rAuto = new Runnable() {
+        @Override
+        public void run() {
+            final IslaConfig c = cfg;
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    IslaConfig.save(getApplicationContext(), c);
+                }
+            }).start();
+        }
+    };
+
+    /** Guarda solo, medio segundo despues del ultimo cambio: ya no hace falta pulsar Guardar. */
+    private void autoGuardar() {
+        hAuto.removeCallbacks(rAuto);
+        hAuto.postDelayed(rAuto, 450);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (cfg != null) {
+            hAuto.removeCallbacks(rAuto);
+            rAuto.run();
+        }
+    }
+
     private void reconstruir() {
         construirUi(scroll != null ? scroll.getScrollY() : 0);
     }
@@ -679,7 +708,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void afterTextChanged(Editable ed) {
-                cfg.blocked = IslaConfig.limpiar(ed.toString());
+                cfg.blocked = IslaConfig.limpiar(ed.toString()); autoGuardar();
             }
         });
         a.addView(bloqueadas);
@@ -1147,7 +1176,7 @@ public class MainActivity extends Activity {
                     actual[0] = idx;
                     mover(ind, fila, opciones.length, idx, true);
                     pintarSegmentos(etiquetas, idx);
-                    s.set(idx);
+                    s.set(idx); autoGuardar();
                 }
             });
             etiquetas[i] = t;
@@ -1216,7 +1245,7 @@ public class MainActivity extends Activity {
         sw.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton b, boolean marcado) {
-                s.set(marcado ? 1 : 0);
+                s.set(marcado ? 1 : 0); autoGuardar();
                 refrescar();
             }
         });
@@ -1239,7 +1268,7 @@ public class MainActivity extends Activity {
             @Override
             public void onProgressChanged(SeekBar bar, int progreso, boolean usuario) {
                 int v = progreso + min;
-                s.set(v);
+                s.set(v); autoGuardar();
                 t.setText(nombre + ": " + et.de(v));
                 refrescar();
             }
@@ -1295,7 +1324,7 @@ public class MainActivity extends Activity {
                 if (v.length() == 6) v = "FF" + v;
                 if (v.length() != 8) return;
                 try {
-                    s.set((int) Long.parseLong(v, 16));
+                    s.set((int) Long.parseLong(v, 16)); autoGuardar();
                     refrescar();
                 } catch (NumberFormatException ignorado) {
                     // todavia no es un color valido

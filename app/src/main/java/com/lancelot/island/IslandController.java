@@ -181,6 +181,11 @@ final class IslandController {
                 try {
                     cfg = IslaConfig.get(ctx);
                     if (!cfg.enabled || !cfg.permite(e.tipo) || !pantallaOn) return;
+                    if (usaMotor()) {
+                        sincronizarMotor();
+                        Isla2.get(ctx).progreso(e, nuevo);
+                        return;
+                    }
                     if (refrescarSiVisible(e)) return;
                     if (nuevo) {
                         e.minimizada = true;
@@ -255,6 +260,12 @@ final class IslandController {
             @Override
             public void run() {
                 try {
+                    cfg = IslaConfig.get(ctx);
+                    if (usaMotor()) {
+                        sincronizarMotor();
+                        Isla2.get(ctx).refrescar(e);
+                        return;
+                    }
                     refrescarSiVisible(e);
                 } catch (Throwable t) {
                     XposedBridge.log(t);
@@ -282,8 +293,61 @@ final class IslandController {
         });
     }
 
+    // ---- motor Xiaomi / iPhone (Isla2)
+
+    private boolean motorActivo;
+
+    private boolean usaMotor() {
+        return cfg.style >= 3 && !Isla2.roto;
+    }
+
+    /** El motor nuevo siempre arranca con copia de lo que haya fijo (llamada, crono, linterna...). */
+    private void sincronizarMotor() {
+        if (!motorActivo) cambiarMotor(true);
+    }
+
+    private void cambiarMotor(boolean on) {
+        motorActivo = on;
+        if (on) {
+            quitarTodo();
+            Isla2.get(ctx).activar(llamada, crono, linterna, musica, musicaSilenciada);
+        } else {
+            Isla2.get(ctx).apagar();
+            restaurarFijo();
+        }
+    }
+
+    /** El motor nuevo fallo varias veces: se vuelve al diseño anterior. */
+    static void motorRoto() {
+        final IslandController i;
+        synchronized (IslandController.class) {
+            i = inst;
+        }
+        if (i == null) return;
+        i.hp.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    i.motorActivo = false;
+                    i.restaurarFijo();
+                } catch (Throwable t) {
+                    XposedBridge.log(t);
+                }
+            }
+        });
+    }
+
     private void rehacerConConfig() {
         cfg = IslaConfig.get(ctx);
+        boolean motor = usaMotor();
+        if (motor != motorActivo) {
+            cambiarMotor(motor);
+            return;
+        }
+        if (motor) {
+            Isla2.get(ctx).reaplicar();
+            return;
+        }
         if (!shown) {
             restaurarFijo();
             return;
@@ -304,6 +368,12 @@ final class IslandController {
             public void run() {
                 try {
                     pantallaOn = on;
+                    cfg = IslaConfig.get(ctx);
+                    if (usaMotor()) {
+                        sincronizarMotor();
+                        Isla2.get(ctx).pantalla(on);
+                        return;
+                    }
                     if (!on) {
                         quitarTodo();
                     } else {
@@ -430,6 +500,11 @@ final class IslandController {
 
     private void mostrar(Evento e) {
         cfg = IslaConfig.get(ctx);
+        if (usaMotor()) {
+            sincronizarMotor();
+            Isla2.get(ctx).mostrar(e);
+            return;
+        }
         if (!cfg.enabled || !cfg.permite(e.tipo) || !pantallaOn || horizontalOculto()) return;
 
         // El volumen se actualiza en el sitio mientras sigues pulsando los botones
@@ -674,6 +749,12 @@ final class IslandController {
             llamada = m;
         }
 
+        if (anunciar && tipo == Evento.MUSICA && m != null) musicaSilenciada = false;
+        if (usaMotor()) {
+            sincronizarMotor();
+            Isla2.get(ctx).fijar(tipo, m, anunciar);
+            return;
+        }
         if (m == null) {
             if (shown && actual != null && actual.tipo == tipo && !esTransitorioReal()) {
                 // Era justo la capsula fija que se acaba de ir
