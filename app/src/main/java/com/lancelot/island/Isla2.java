@@ -24,6 +24,7 @@ import android.util.TypedValue;
 import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
@@ -97,6 +98,16 @@ final class Isla2 {
     private static final Curva BAN_ANCHO_OUT = new Curva(1f, 0.74f, 0.20f, -0.136f, -0.123f,
             -0.032f, 0.0065f, 0.019f, 0.026f, 0.005f, 0f);
     private static final Curva BAN_ALTO_OUT = new Curva(1f, 0.94f, 0.82f, 0.88f, 0.94f, 1f);
+    /** La isla sale de la camara: ancho y alto relativos al tamano final (medido del video). */
+    private static final Curva EMER_W = new Curva(0f, 0.214f, 0.429f, 0.619f, 0.738f, 0.869f,
+            0.952f, 1f, 1.036f, 1.048f, 1.048f, 1.036f, 1.024f, 1.012f, 1f);
+    private static final Curva EMER_H = new Curva(0f, 0.31f, 0.62f, 0.69f, 0.85f, 0.92f, 0.92f,
+            1f);
+    /** Y vuelve a meterse en la camara: ancho (1 = actual, 0.17 = hueco) y alto relativos. */
+    private static final Curva SAL_W = new Curva(1f, 0.98f, 0.81f, 0.67f, 0.52f, 0.40f, 0.29f,
+            0.28f, 0.22f, 0.21f, 0.19f, 0.18f, 0.18f, 0.17f);
+    private static final Curva SAL_H = new Curva(1f, 1f, 0.91f, 0.86f, 0.71f, 0.66f, 0.6f, 0.6f,
+            0.57f, 0.54f, 0.54f, 0.54f, 0.54f, 0.54f);
 
     private static final class Muelle implements TimeInterpolator {
         private final float amort;
@@ -111,6 +122,31 @@ final class Isla2 {
         public float getInterpolation(float t) {
             if (t >= 1f) return 1f;
             return (float) (1.0 - Math.exp(-amort * t) * Math.cos(2.0 * Math.PI * freq * t));
+        }
+    }
+
+    /**
+     * Muelle fisico con los mismos parametros que usa Xiaomi (miuix): respuesta en segundos y
+     * razon de amortiguacion. pos() da el desplazamiento respecto al destino en el instante t.
+     */
+    private static final class Resorte {
+        private final float w;
+        private final float z;
+
+        Resorte(float respuesta, float amort) {
+            this.w = (float) (2.0 * Math.PI / respuesta);
+            this.z = amort;
+        }
+
+        float pos(float x0, float v0, float t) {
+            if (z < 1f) {
+                float wd = w * (float) Math.sqrt(1f - z * z);
+                float e = (float) Math.exp(-z * w * t);
+                return e * (x0 * (float) Math.cos(wd * t)
+                        + ((v0 + z * w * x0) / wd) * (float) Math.sin(wd * t));
+            }
+            float e = (float) Math.exp(-w * t);
+            return e * (x0 + (v0 + w * x0) * t);
         }
     }
 
@@ -134,6 +170,8 @@ final class Isla2 {
     private Evento linterna;
     private Evento musica;
     private boolean musicaSilenciada;
+    /** Elementos fijos ocultados al deslizarlos (bit por tipo); vuelven al anunciarse de nuevo. */
+    private int ocultos;
 
     // Lo que hay en pantalla ahora
     private Evento banner;      // banner o capsula de aviso sobre la pildora
@@ -511,6 +549,7 @@ final class Isla2 {
             llamada = m;
         }
         if (m == null) {
+            ocultos &= ~(1 << tipo);
             if (cardVivo && cardEv != null && cardEv.tipo == tipo) {
                 cardEv = null;
                 cardVivo = false;
@@ -531,6 +570,7 @@ final class Isla2 {
             return;
         }
         if (anunciar) {
+            ocultos &= ~(1 << tipo);
             if (tipo == Evento.MUSICA) musicaSilenciada = false;
             boolean importante = tipo == Evento.LLAMADA || tipo == Evento.LINTERNA
                     || tipo == Evento.CRONO;
@@ -560,6 +600,10 @@ final class Isla2 {
                 }).start();
     }
 
+    private boolean oculto(int tipo) {
+        return (ocultos & (1 << tipo)) != 0;
+    }
+
     private boolean enVivos(Evento m) {
         return vivos().contains(m);
     }
@@ -568,8 +612,8 @@ final class Isla2 {
     private ArrayList<Evento> vivos() {
         ArrayList<Evento> v = new ArrayList<>();
         if (llamada != null && cfg.fLlamada) v.add(llamada);
-        if (crono != null && cfg.fCrono) v.add(crono);
-        if (linterna != null && cfg.fLinterna) v.add(linterna);
+        if (crono != null && cfg.fCrono && !oculto(Evento.CRONO)) v.add(crono);
+        if (linterna != null && cfg.fLinterna && !oculto(Evento.LINTERNA)) v.add(linterna);
         if (musica != null && !musicaSilenciada && cfg.fMusica && cfg.permite(Evento.MUSICA)) {
             v.add(musica);
         }
@@ -827,9 +871,10 @@ final class Isla2 {
     private void ajustarVentana() {
         if (root == null) return;
         boolean amplia = cardEv != null || pCard != null || banner != null
-                || (pMain != null && pMain.clase == 2) || animsActivas > 0
+                || (pMain != null && pMain.clase == 2) || animsActivas > 0 || arrastrando
                 || !piezasSalientes.isEmpty();
         int bottom = topP + hP + px(12);
+        if (arrastrando) bottom += dp(24);
         if (pCard != null || cardEv != null) {
             int ch = alturaCard(cardEv != null ? cardEv : (pCard != null ? pCard.ev : null));
             bottom = Math.max(bottom, cardTop + Math.max(ch, pCard != null ? pCard.h : 0)
@@ -954,6 +999,8 @@ final class Isla2 {
         Capa actual;
         boolean vivo = true;
         ValueAnimator rectAnim;
+        ValueAnimator vuelta;
+        float blur;
         final ArrayList<Capa> salientes = new ArrayList<>();
 
         Pieza(Drawable fondo) {
@@ -1098,6 +1145,7 @@ final class Isla2 {
         if (p == null) return;
         p.vivo = false;
         p.cancelarRect();
+        cancelarVuelta(p);
         try {
             inner.removeView(p.capa);
         } catch (Throwable t) {
@@ -1175,7 +1223,7 @@ final class Isla2 {
                 if (g != gen) return;
                 if (pMain == null && pCirc == null && pCard == null) quitarTodo();
             }
-        }, 450);
+        }, (long) (620 * ts()));
     }
 
     private void aplicar() {
@@ -1269,53 +1317,116 @@ final class Isla2 {
         cambiarPildora(pMain, antes, dClase, dEv, dW);
     }
 
+    /**
+     * La pildora nace del hueco de la camara (22 px de alto y 32 de ancho en el video) y se
+     * estira con un pequeno rebote; el contenido aparece cuando ya hay sitio. El circulo del
+     * segundo elemento conserva su pop breve.
+     */
     private void entradaPildora(final Pieza p) {
-        p.capa.setPivotX(bleed + p.w / 2f);
-        p.capa.setPivotY(bleed + p.h / 2f);
-        p.capa.setAlpha(0f);
-        p.capa.setScaleX(0.6f);
-        p.capa.setScaleY(0.6f);
-        desenfocar(p.capa, 10f);
-        tween(0, (long) (220 * ts()), ios ? new Muelle(5.5f, 1.2f) : new DecelerateInterpolator(1.6f),
-                new Paso() {
-                    @Override
-                    public void f(float t) {
-                        float s = 0.6f + 0.4f * t;
-                        p.capa.setScaleX(s);
-                        p.capa.setScaleY(s);
-                        p.capa.setAlpha(Math.min(1f, t * 2.5f));
-                        desenfocar(p.capa, 10f * (1f - Math.min(1f, t * 1.4f)));
-                    }
-                }, new Fin() {
-                    @Override
-                    public void f(boolean c) {
-                        p.capa.setScaleX(1f);
-                        p.capa.setScaleY(1f);
-                        p.capa.setAlpha(1f);
-                        desenfocar(p.capa, 0f);
-                    }
-                });
+        if (p.clase == 3) {
+            entradaCirculo(p);
+            return;
+        }
+        final int wT = p.w;
+        final int hT = p.h;
+        final int w0 = Math.min(wT, px(40));
+        final int h0 = Math.min(hT, Math.round(hT * 22f / 35f));
+        p.colocar(pillCx - w0 / 2, topP + (hT - h0) / 2, w0, h0, h0 / 2f);
+        final Capa c = p.actual;
+        if (c != null) {
+            c.setAlpha(0f);
+            desenfocar(c, 8f);
+        }
+        final float dur = ios ? 460f : EMER_W.durMs();
+        final Muelle mu = new Muelle(5.6f, 1.25f);
+        p.cancelarRect();
+        p.rectAnim = tween(0, (long) (dur * ts()), null, new Paso() {
+            @Override
+            public void f(float t) {
+                if (!p.vivo) return;
+                float ms = t * dur;
+                float u = ios ? mu.getInterpolation(t) : EMER_W.en(ms);
+                float hf = ios ? u : EMER_H.en(Math.min(ms, EMER_H.durMs()));
+                int w = Math.max(px(24), Math.round(w0 + (wT - w0) * u));
+                int hh = Math.max(px(20), Math.round(h0 + (hT - h0) * hf));
+                p.colocar(pillCx - w / 2, topP + (hT - hh) / 2, w, hh, hh / 2f);
+                reubicarCirc();
+                if (c != null) {
+                    float a = limitar((ms - 90f) / 200f, 0f, 1f);
+                    c.setAlpha(a);
+                    desenfocar(c, 8f * (1f - a));
+                }
+            }
+        }, new Fin() {
+            @Override
+            public void f(boolean cancelada) {
+                if (c != null) {
+                    c.setAlpha(1f);
+                    desenfocar(c, 0f);
+                }
+                if (!cancelada && p.vivo) {
+                    p.colocar(pillCx - wT / 2, topP, wT, hT, hT / 2f);
+                    reubicarCirc();
+                }
+            }
+        });
     }
 
+    /** La pildora se retira hacia la camara (curva medida del video) y desaparece al llegar. */
     private void salirPildora(final Pieza p) {
         p.vivo = false;
         p.cancelarRect();
-        tween(0, (long) (140 * ts()), new android.view.animation.AccelerateInterpolator(),
-                new Paso() {
-                    @Override
-                    public void f(float t) {
-                        float s = 1f - 0.35f * t;
-                        p.capa.setScaleX(s);
-                        p.capa.setScaleY(s);
-                        p.capa.setAlpha(1f - t);
-                        desenfocar(p.capa, 10f * t);
-                    }
-                }, new Fin() {
-                    @Override
-                    public void f(boolean c) {
-                        quitarPieza(p);
-                    }
-                });
+        cancelarVuelta(p);
+        if (p.clase == 3) {
+            tween(0, (long) (140 * ts()), new android.view.animation.AccelerateInterpolator(),
+                    new Paso() {
+                        @Override
+                        public void f(float t) {
+                            float s = 1f - 0.35f * t;
+                            p.capa.setScaleX(s);
+                            p.capa.setScaleY(s);
+                            p.capa.setAlpha(1f - t);
+                            desenfocar(p.capa, 10f * t);
+                        }
+                    }, new Fin() {
+                        @Override
+                        public void f(boolean c) {
+                            quitarPieza(p);
+                        }
+                    });
+            return;
+        }
+        final int w0 = p.w;
+        final int h0 = p.h;
+        final int cx = p.x + p.w / 2;
+        final int cy = p.y + p.h / 2;
+        final int wHueco = Math.min(w0, px(26));
+        final Capa c = p.actual;
+        final float dur = ios ? 380f : SAL_W.durMs();
+        final float a0 = p.capa.getAlpha();
+        p.vuelta = null;
+        tween(0, (long) (dur * ts()), null, new Paso() {
+            @Override
+            public void f(float t) {
+                float ms = t * dur;
+                float v = ios ? (1f - t) * (1f - t) : limitar((SAL_W.en(ms) - 0.17f) / 0.83f, 0f, 1f);
+                float hf = ios ? 1f - 0.46f * t : SAL_H.en(Math.min(ms, SAL_H.durMs()));
+                int w = Math.max(px(20), Math.round(wHueco + (w0 - wHueco) * v));
+                int hh = Math.max(px(16), Math.round(h0 * hf));
+                p.colocar(cx - w / 2, cy - hh / 2, w, hh, hh / 2f);
+                if (c != null) {
+                    float a = 1f - limitar(ms / 120f, 0f, 1f);
+                    c.setAlpha(a);
+                }
+                float fin = limitar((ms - (dur - 90f)) / 90f, 0f, 1f);
+                p.capa.setAlpha(a0 * (1f - fin));
+            }
+        }, new Fin() {
+            @Override
+            public void f(boolean cancelada) {
+                quitarPieza(p);
+            }
+        });
     }
 
     private void cambiarPildora(final Pieza p, int antes, int ahora, Evento ev, int dW) {
@@ -1534,6 +1645,8 @@ final class Isla2 {
     }
 
     private void entradaCard(final Pieza p, long retraso) {
+        final int de = dirEntrada;
+        dirEntrada = 0;
         if (ios) {
             final int w0 = pMain != null ? pMain.w : idleW;
             final int x1 = p.x;
@@ -1564,6 +1677,7 @@ final class Isla2 {
                 }
             });
             final int xa = pillCx - w0 / 2;
+            final float ex = de == 2 ? dp(40) : (de == 3 ? -dp(40) : 0f);
             p.cancelarRect();
             p.rectAnim = tween(retraso, (long) (580 * ts()), new Muelle(5.6f, 1.25f), new Paso() {
                 @Override
@@ -1575,23 +1689,35 @@ final class Isla2 {
                     int yy = Math.round(topP + (y1 - topP) * t);
                     float rr = hP / 2f + (r1 - hP / 2f) * Math.min(1f, t);
                     p.colocar(xx, yy, w, hh, Math.min(rr, hh / 2f));
+                    if (ex != 0f) p.capa.setTranslationX(ex * (1f - Math.min(1f, t)));
                 }
-            }, null);
+            }, new Fin() {
+                @Override
+                public void f(boolean cancel) {
+                    if (ex != 0f && p.vivo) p.capa.setTranslationX(0f);
+                }
+            });
             return;
         }
+        // Xiaomi: aparece desde arriba con escala 0.78, desenfoque 16 y alfa 0.5 (medido del video).
+        // Al navegar entre tarjetas llega ademas deslizandose desde el lado contrario.
+        final float ex = de == 2 ? dp(54) : (de == 3 ? -dp(54) : 0f);
+        final float s0 = ex != 0f ? 0.92f : 0.78f;
         p.capa.setPivotX(bleed + p.w / 2f);
         p.capa.setPivotY(bleed);
-        p.capa.setScaleX(0.78f);
-        p.capa.setScaleY(0.78f);
+        p.capa.setScaleX(s0);
+        p.capa.setScaleY(s0);
         p.capa.setAlpha(0.5f);
+        p.capa.setTranslationX(ex);
         desenfocar(p.capa, 16f);
-        tween(retraso, (long) (210 * ts()), null, new Paso() {
+        tween(retraso, (long) ((ex != 0f ? 260 : 210) * ts()), null, new Paso() {
             @Override
             public void f(float t) {
                 float e = 1f - (1f - t) * (1f - t) * (1f - t);
-                float s = 0.78f + 0.22f * e;
+                float s = s0 + (1f - s0) * e;
                 p.capa.setScaleX(s);
                 p.capa.setScaleY(s);
+                p.capa.setTranslationX(ex * (1f - e));
                 p.capa.setAlpha(Math.min(1f, 0.5f + t * 1.1f));
                 desenfocar(p.capa, 16f * (1f - e));
             }
@@ -1600,16 +1726,34 @@ final class Isla2 {
             public void f(boolean c) {
                 p.capa.setScaleX(1f);
                 p.capa.setScaleY(1f);
+                p.capa.setTranslationX(0f);
                 p.capa.setAlpha(1f);
                 desenfocar(p.capa, 0f);
             }
         });
     }
 
+    /**
+     * La tarjeta sale continuando desde donde este (arrastrada, inclinada, a medio desvanecer):
+     * nada salta al soltar. Si se fue deslizando, sigue en esa direccion mientras se apaga.
+     */
     private void salirCard(final Pieza p, boolean cambio) {
         p.vivo = false;
         p.cancelarRect();
+        cancelarVuelta(p);
         piezasSalientes.add(p);
+        final int dir = dirSalida;
+        dirSalida = 0;
+        final View c0 = p.capa;
+        c0.animate().cancel();
+        final float tx0 = c0.getTranslationX();
+        final float ty0 = c0.getTranslationY();
+        final float sx0 = c0.getScaleX();
+        final float sy0 = c0.getScaleY();
+        final float a0 = c0.getAlpha();
+        final float rx0 = c0.getRotationX();
+        final float ry0 = c0.getRotationY();
+        final float b0 = p.blur;
         if (ios && !cambio) {
             final int x0 = p.x;
             final int y0 = p.y;
@@ -1636,7 +1780,13 @@ final class Isla2 {
                     int yy = Math.round(y0 + (topP - y0) * t);
                     p.colocar(xx, yy, w, hh, Math.min(hh / 2f, radioCard(h0)
                             + (hP / 2f - radioCard(h0)) * t));
-                    p.capa.setAlpha(t > 0.8f ? (1f - t) * 5f : 1f);
+                    p.capa.setTranslationX(tx0 * (1f - t));
+                    p.capa.setTranslationY(ty0 * (1f - t));
+                    p.capa.setScaleX(sx0 + (1f - sx0) * t);
+                    p.capa.setScaleY(sy0 + (1f - sy0) * t);
+                    p.capa.setRotationX(rx0 * (1f - t));
+                    p.capa.setRotationY(ry0 * (1f - t));
+                    p.capa.setAlpha(a0 * (t > 0.8f ? (1f - t) * 5f : 1f));
                 }
             }, new Fin() {
                 @Override
@@ -1647,18 +1797,30 @@ final class Isla2 {
             });
             return;
         }
-        p.capa.setPivotX(bleed + p.w / 2f);
-        p.capa.setPivotY(bleed);
-        final float fin = cambio ? 0.88f : 0.82f;
-        tween(0, (long) ((cambio ? 110 : 160) * ts()),
-                new android.view.animation.AccelerateInterpolator(), new Paso() {
+        if (sx0 >= 0.999f && sy0 >= 0.999f) {
+            p.capa.setPivotX(bleed + p.w / 2f);
+            p.capa.setPivotY(bleed);
+        }
+        final boolean desliza = dir != 0;
+        final float fin = desliza ? 0.9f : (cambio ? 0.88f : 0.82f);
+        final float txFin = dir == 2 ? tx0 - dp(60) : (dir == 3 ? tx0 + dp(60) : tx0);
+        final float tyFin = dir == 1 ? ty0 - dp(26) : (dir == 4 ? ty0 + dp(34) : ty0);
+        final long dur = (long) ((desliza ? 200 : (cambio ? 110 : 160)) * ts());
+        tween(0, dur,
+                desliza ? new DecelerateInterpolator(1.3f)
+                        : new android.view.animation.AccelerateInterpolator(),
+                new Paso() {
                     @Override
                     public void f(float t) {
-                        float s = 1f - (1f - fin) * t;
-                        p.capa.setScaleX(s);
-                        p.capa.setScaleY(s);
-                        p.capa.setAlpha(1f - t);
-                        desenfocar(p.capa, 14f * t);
+                        float sa = Math.min(1f, t * (desliza ? 1.25f : 1f));
+                        p.capa.setScaleX(sx0 + (fin - sx0) * t);
+                        p.capa.setScaleY(sy0 + (fin - sy0) * t);
+                        p.capa.setTranslationX(tx0 + (txFin - tx0) * t);
+                        p.capa.setTranslationY(ty0 + (tyFin - ty0) * t);
+                        p.capa.setRotationX(rx0 * (1f - t));
+                        p.capa.setRotationY(ry0 * (1f - t));
+                        p.capa.setAlpha(a0 * (1f - sa));
+                        desenfocar(p.capa, b0 + (14f - b0) * t);
                     }
                 }, new Fin() {
                     @Override
@@ -2483,12 +2645,24 @@ final class Isla2 {
     private boolean moviendo;
     private boolean largoHecho;
     private long ultimoToque;
+    private VelocityTracker vt;
+    /** Eje del arrastre: 0 sin decidir, 1 vertical, 2 horizontal. */
+    private int eje;
+    /** El arrastre ya paso el umbral de confirmacion (se avisa con una vibracion corta). */
+    private boolean listo;
+    /** Hay un dedo sobre la isla: la ventana se mantiene ancha para no recortar el arrastre. */
+    private boolean arrastrando;
+    /** Direccion con la que se va una tarjeta al soltarla: 1 arriba, 2 izq, 3 der, 4 abajo. */
+    private int dirSalida;
+    /** Direccion de la que llega la tarjeta siguiente al navegar. */
+    private int dirEntrada;
     private final Runnable largoRun = new Runnable() {
         @Override
         public void run() {
             if (!moviendo && !largoHecho && objetivo != 0) {
                 largoHecho = true;
                 try {
+                    soltarInclinacion(piezaDe(objetivo));
                     largo(objetivo);
                 } catch (Throwable t) {
                     XposedBridge.log(t);
@@ -2513,6 +2687,34 @@ final class Isla2 {
         return o == 1 ? pMain : (o == 2 ? pCirc : pCard);
     }
 
+    private static float tanh(float x) {
+        return (float) Math.tanh(x);
+    }
+
+    private static float limitar(float v, float a, float b) {
+        return Math.max(a, Math.min(b, v));
+    }
+
+    /** Seguimiento del dedo en el eje cruzado: acotado, como el de la isla de Xiaomi. */
+    private float sigue(float d) {
+        float l = dp(16);
+        return l * tanh(d * 0.2f / l);
+    }
+
+    private void ponerBlur(Pieza p, float px) {
+        float q = Math.round(px);
+        if (q == p.blur) return;
+        p.blur = q;
+        desenfocar(p.capa, q);
+    }
+
+    private void cancelarVuelta(Pieza p) {
+        if (p != null && p.vuelta != null) {
+            p.vuelta.cancel();
+            p.vuelta = null;
+        }
+    }
+
     private boolean toque(MotionEvent ev) {
         float rx = ev.getRawX();
         float ry = ev.getRawY();
@@ -2524,66 +2726,84 @@ final class Isla2 {
                 dY = ry;
                 moviendo = false;
                 largoHecho = false;
+                eje = 0;
+                listo = false;
+                dirSalida = 0;
+                dirEntrada = 0;
+                if (vt != null) vt.recycle();
+                vt = VelocityTracker.obtain();
+                velocidad(ev);
                 cancelar(cardPend);
                 cancelar(bannerPend);
                 h.postDelayed(largoRun, 450);
                 Pieza p = piezaDe(objetivo);
-                if (p != null) {
-                    p.capa.animate().scaleX(0.97f).scaleY(0.97f).setDuration(90)
-                            .setInterpolator(new DecelerateInterpolator()).start();
+                if (p != null && (p.clase != 0 || p.ev != null)) {
+                    arrastrando = true;
+                    ajustarVentana();
+                    pulsar(p, rx, ry);
                 }
                 return true;
             }
             case MotionEvent.ACTION_MOVE: {
                 if (objetivo == 0) return false;
+                velocidad(ev);
                 float dx = rx - dX;
                 float dy = ry - dY;
+                Pieza p = piezaDe(objetivo);
                 if (!moviendo && (Math.abs(dx) > dp(8) || Math.abs(dy) > dp(8))) {
                     moviendo = true;
                     h.removeCallbacks(largoRun);
-                }
-                Pieza p = piezaDe(objetivo);
-                if (moviendo && !largoHecho && p != null) {
-                    if (Math.abs(dx) > Math.abs(dy)) {
-                        p.capa.setTranslationX(dx * 0.7f);
-                    } else if (dy < 0) {
-                        p.capa.setTranslationY(dy);
-                    } else {
-                        p.capa.setTranslationY(Math.min(dy * 0.35f, dp(14)));
+                    eje = Math.abs(dx) > Math.abs(dy) ? 2 : 1;
+                    if (p != null) {
+                        p.capa.animate().cancel();
+                        soltarInclinacion(p);
                     }
+                }
+                if (moviendo && !largoHecho && p != null && (p.clase != 0 || p.ev != null)) {
+                    arrastrar(p, objetivo, dx, dy);
                 }
                 return true;
             }
             case MotionEvent.ACTION_UP: {
                 if (objetivo == 0) return false;
                 h.removeCallbacks(largoRun);
+                velocidad(ev);
+                float vx = 0f;
+                float vy = 0f;
+                if (vt != null) {
+                    vt.computeCurrentVelocity(1000);
+                    vx = vt.getXVelocity();
+                    vy = vt.getYVelocity();
+                    vt.recycle();
+                    vt = null;
+                }
                 float dx = rx - dX;
                 float dy = ry - dY;
                 int obj = objetivo;
                 Pieza p = piezaDe(obj);
-                soltar(p);
-                if (largoHecho) {
+                try {
+                    soltarGesto(obj, p, dx, dy, vx, vy);
+                    // Lo que no se haya ido ni este ya volviendo se asienta sin dejar escala ni
+                    // inclinacion a medias; los temporizadores de cierre vuelven a contar.
+                    if (p != null && p.vivo && p.vuelta == null) volverFisico(p, 0f, 0f);
                     reanudar();
-                    return true;
-                }
-                if (Math.abs(dx) > dp(48) && Math.abs(dx) > Math.abs(dy)) {
-                    horizontal(obj, dx);
-                } else if (dy < -dp(24)) {
-                    arriba(obj);
-                } else if (dy > dp(24) && obj != 3) {
-                    tocar(obj);
-                } else if (Math.abs(dx) < dp(8) && Math.abs(dy) < dp(8)) {
-                    tocar(obj);
-                } else {
-                    volver(p);
+                } finally {
+                    dirSalida = 0;
+                    dirEntrada = 0;
+                    finGesto();
                 }
                 return true;
             }
             case MotionEvent.ACTION_CANCEL: {
                 h.removeCallbacks(largoRun);
+                if (vt != null) {
+                    vt.recycle();
+                    vt = null;
+                }
                 Pieza p = piezaDe(objetivo);
-                soltar(p);
-                volver(p);
+                volverFisico(p, 0f, 0f);
+                reanudar();
+                finGesto();
                 return true;
             }
             default:
@@ -2591,18 +2811,224 @@ final class Isla2 {
         }
     }
 
-    private void soltar(Pieza p) {
-        if (p == null) return;
-        p.capa.animate().scaleX(1f).scaleY(1f).setDuration(cfg.ms(300))
-                .setInterpolator(new Muelle(6f, 1.4f)).start();
+    /** La velocidad se mide en coordenadas de pantalla: la ventana cambia de tamano al tocar. */
+    private void velocidad(MotionEvent ev) {
+        if (vt == null) return;
+        MotionEvent c = MotionEvent.obtain(ev);
+        c.setLocation(ev.getRawX(), ev.getRawY());
+        vt.addMovement(c);
+        c.recycle();
     }
 
-    private void volver(Pieza p) {
-        if (p != null) {
-            p.capa.animate().translationX(0f).translationY(0f).setDuration(cfg.ms(240))
-                    .setInterpolator(new Muelle(6f, 1.3f)).start();
+    private void finGesto() {
+        arrastrando = false;
+        moviendo = false;
+        objetivo = 0;
+        h.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (!arrastrando) ajustarVentana();
+                } catch (Throwable t) {
+                    XposedBridge.log(t);
+                }
+            }
+        }, 120);
+    }
+
+    /** Decide al soltar: confirma o cancela el gesto, contando la velocidad del dedo. */
+    private void soltarGesto(int obj, Pieza p, float dx, float dy, float vx, float vy) {
+        if (largoHecho) {
+            volverFisico(p, 0f, 0f);
+            reanudar();
+            return;
         }
-        reanudar();
+        boolean card = obj == 3;
+        if (!moviendo) {
+            // toque simple
+            if (!card) volverFisico(p, 0f, 0f);
+            tocar(obj);
+            return;
+        }
+        // 80 ms de inercia: un golpe rapido corto tambien cuenta
+        float pdx = dx + vx * 0.08f;
+        float pdy = dy + vy * 0.08f;
+        float umH = card ? dp(80) : dp(52);
+        float umU = card ? umbralArriba(p) : dp(34);
+        if (eje == 2 && Math.abs(pdx) > umH) {
+            dirSalida = pdx < 0 ? 2 : 3;
+            horizontal(obj, pdx, vx);
+        } else if (eje == 1 && pdy < -umU) {
+            dirSalida = 1;
+            arriba(obj, vy);
+        } else if (eje == 1 && pdy > (card ? dp(52) : dp(24))) {
+            if (card) {
+                dirSalida = 4;
+                abajoCard();
+            } else {
+                volverFisico(p, 0f, 0f);
+                tocar(obj);
+            }
+        } else {
+            volverFisico(p, vx, vy);
+            reanudar();
+        }
+    }
+
+    private float umbralArriba(Pieza p) {
+        return Math.max(dp(52), (p != null ? p.h : 0) * 0.55f);
+    }
+
+    /** Pulsar: la pieza se hunde un poco y la tarjeta se inclina hacia el lado pulsado. */
+    private void pulsar(Pieza p, float rx, float ry) {
+        cancelarVuelta(p);
+        float esc = ios ? 0.965f : 0.97f;
+        p.capa.animate().cancel();
+        p.capa.animate().scaleX(esc).scaleY(esc).setDuration(110)
+                .setInterpolator(new DecelerateInterpolator()).start();
+        if (p == pCard && p.w > 0 && p.h > 0) {
+            // zona central sin inclinacion y ganancia suave hacia los bordes (como Xiaomi)
+            float nx = limitar((rx - (p.x + p.w / 2f)) / (p.w / 2f), -1f, 1f);
+            float ny = limitar((ry - (p.y + p.h / 2f)) / (p.h / 2f), -1f, 1f);
+            float ax = suave(nx);
+            float ay = suave(ny);
+            p.capa.setCameraDistance(1600f * density);
+            p.capa.animate().rotationY(1.8f * ax).rotationX(-1.8f * ay).setDuration(120)
+                    .setInterpolator(new DecelerateInterpolator()).start();
+        }
+    }
+
+    private static float suave(float v) {
+        float a = limitar((Math.abs(v) - 0.20f) / 0.80f, 0f, 1f);
+        return (v < 0f ? -1f : 1f) * (1f - (1f - a) * (1f - a));
+    }
+
+    private void soltarInclinacion(Pieza p) {
+        if (p == null) return;
+        if (p.capa.getRotationX() != 0f || p.capa.getRotationY() != 0f) {
+            p.capa.animate().rotationX(0f).rotationY(0f).setDuration(160)
+                    .setInterpolator(new DecelerateInterpolator()).start();
+        }
+    }
+
+    /**
+     * La pieza sigue al dedo. Al deslizar para quitarla se va desvaneciendo y desenfocando
+     * (alfa 1 a 0.2 como la isla de Xiaomi), con friccion al tirar hacia abajo.
+     */
+    private void arrastrar(Pieza p, int obj, float dx, float dy) {
+        boolean card = obj == 3;
+        float base = ios ? 0.965f : 0.97f;
+        float ease = Math.min(1f, Math.max(Math.abs(dx), Math.abs(dy)) / dp(28));
+        float sb = base + (1f - base) * ease;
+        float tx;
+        float ty;
+        float pr;
+        float sx = sb;
+        float sy = sb;
+        float al = 1f;
+        float bl = 0f;
+        float maxBl = ios ? 0f : (card ? 12f : 5f);
+        float minAl = ios ? 0.45f : 0.2f;
+        if (eje == 2) {
+            float um = card ? dp(80) : dp(52);
+            float lim = card ? dp(170) : dp(110);
+            pr = Math.min(1f, Math.abs(dx) / um);
+            tx = lim * tanh(dx / lim);
+            ty = sigue(dy);
+            al = 1f - (1f - minAl) * pr;
+            bl = maxBl * pr;
+            sx = sb * (1f - 0.08f * pr);
+            sy = sb * (1f - 0.015f * pr);
+            confirmar(pr >= 1f);
+        } else if (dy < 0f) {
+            float um = card ? umbralArriba(p) : dp(34);
+            pr = Math.min(1f, -dy / um);
+            float lim = um * 1.6f;
+            ty = -lim * tanh(-dy / lim);
+            tx = sigue(dx);
+            al = 1f - (1f - minAl) * pr;
+            bl = maxBl * pr;
+            float k2 = 1f - (ios ? 0.03f : 0.06f) * pr;
+            sx = sb * k2;
+            sy = sb * k2;
+            confirmar(pr >= 1f);
+        } else {
+            float lim = card ? dp(64) : dp(16);
+            ty = lim * tanh(dy / lim);
+            tx = sigue(dx);
+            pr = Math.min(1f, dy / (card ? dp(52) : dp(24)));
+            if (card) al = 1f - 0.3f * pr;
+            confirmar(card && pr >= 1f);
+        }
+        p.capa.setTranslationX(tx);
+        p.capa.setTranslationY(ty);
+        p.capa.setScaleX(sx);
+        p.capa.setScaleY(sy);
+        p.capa.setAlpha(al);
+        ponerBlur(p, bl);
+    }
+
+    private void confirmar(boolean ahora) {
+        if (ahora == listo) return;
+        listo = ahora;
+        if (cfg.haptic) vibrar(false);
+    }
+
+    /**
+     * Vuelve la pieza a su sitio con un muelle fisico que arranca con la velocidad del dedo:
+     * rebote suave en posicion y escala, sin rebote en alfa y desenfoque.
+     */
+    private void volverFisico(final Pieza p, float vx, float vy) {
+        if (p == null || !p.vivo) return;
+        cancelarVuelta(p);
+        final View c = p.capa;
+        c.animate().cancel();
+        final float tx0 = c.getTranslationX();
+        final float ty0 = c.getTranslationY();
+        final float sx0 = c.getScaleX();
+        final float sy0 = c.getScaleY();
+        final float a0 = c.getAlpha();
+        final float rx0 = c.getRotationX();
+        final float ry0 = c.getRotationY();
+        final float b0 = p.blur;
+        if (Math.abs(tx0) < 0.5f && Math.abs(ty0) < 0.5f && Math.abs(sx0 - 1f) < 0.002f
+                && Math.abs(sy0 - 1f) < 0.002f && a0 > 0.995f && Math.abs(rx0) < 0.05f
+                && Math.abs(ry0) < 0.05f && b0 < 0.5f) {
+            return;
+        }
+        final float vxx = limitar(vx, -dp(2600), dp(2600));
+        final float vyy = limitar(vy, -dp(2600), dp(2600));
+        final Resorte mv = new Resorte(0.36f, 0.66f);
+        final Resorte es = new Resorte(0.30f, 0.58f);
+        final Resorte fd = new Resorte(0.20f, 1f);
+        p.vuelta = tween(0, 700, null, new Paso() {
+            @Override
+            public void f(float u) {
+                float t = u * 0.7f;
+                c.setTranslationX(mv.pos(tx0, vxx, t));
+                c.setTranslationY(mv.pos(ty0, vyy, t));
+                c.setScaleX(1f + es.pos(sx0 - 1f, 0f, t));
+                c.setScaleY(1f + es.pos(sy0 - 1f, 0f, t));
+                c.setRotationX(es.pos(rx0, 0f, t));
+                c.setRotationY(es.pos(ry0, 0f, t));
+                c.setAlpha(limitar(1f + fd.pos(a0 - 1f, 0f, t), 0f, 1f));
+                ponerBlur(p, Math.max(0f, fd.pos(b0, 0f, t)));
+            }
+        }, new Fin() {
+            @Override
+            public void f(boolean cancelada) {
+                if (cancelada) return;
+                p.vuelta = null;
+                c.setTranslationX(0f);
+                c.setTranslationY(0f);
+                c.setScaleX(1f);
+                c.setScaleY(1f);
+                c.setRotationX(0f);
+                c.setRotationY(0f);
+                c.setAlpha(1f);
+                ponerBlur(p, 0f);
+            }
+        });
     }
 
     /** Tras un gesto sin efecto, los temporizadores de cierre vuelven a contar. */
@@ -2662,9 +3088,7 @@ final class Isla2 {
     }
 
     private void volverSinReanudar(Pieza p) {
-        if (p == null) return;
-        p.capa.setTranslationX(0f);
-        p.capa.setTranslationY(0f);
+        volverFisico(p, 0f, 0f);
     }
 
     private void tocarCard() {
@@ -2674,7 +3098,6 @@ final class Isla2 {
         boolean doble = cfg.dobleToque && ahora - ultimoToque < 350;
         ultimoToque = ahora;
         PendingIntent pi = e.accion;
-        volverSinReanudar(pCard);
         cerrarCard();
         if (doble) return;
         if (pi != null) {
@@ -2686,34 +3109,53 @@ final class Isla2 {
         }
     }
 
-    private void arriba(int obj) {
+    /** Tirar hacia abajo de la barrita de una tarjeta: abre la app (como la mini ventana de Xiaomi). */
+    private void abajoCard() {
+        ultimoToque = 0L;
+        tocarCard();
+    }
+
+    /** Oculta un elemento fijo al deslizarlo; sigue activo y vuelve al anunciarse de nuevo. */
+    private boolean ocultarVivo(Evento ev) {
+        if (ev.tipo == Evento.MUSICA) {
+            musicaSilenciada = true;
+            return true;
+        }
+        if (ev.tipo == Evento.CRONO || ev.tipo == Evento.LINTERNA) {
+            ocultos |= 1 << ev.tipo;
+            return true;
+        }
+        return false;
+    }
+
+    private void descartarBanner() {
+        if (trans == banner) trans = null;
+        banner = null;
+        cancelar(bannerPend);
+        bannerPend = null;
+        aplicar();
+    }
+
+    private void arriba(int obj, float vy) {
         Pieza p = piezaDe(obj);
         if (obj == 3) {
-            volverSinReanudar(p);
             cerrarCard();
             return;
         }
         if (p == null) return;
         if (obj == 1 && p.clase == 2) {
-            volverSinReanudar(p);
-            if (trans == banner) trans = null;
-            banner = null;
-            cancelar(bannerPend);
-            bannerPend = null;
-            aplicar();
+            descartarBanner();
+            volverFisico(p, 0f, vy);
             return;
         }
         Evento ev = p.ev;
-        if (ev != null && ev.tipo == Evento.MUSICA) {
-            volverSinReanudar(p);
-            musicaSilenciada = true;
+        if (ev != null && ocultarVivo(ev)) {
             aplicar();
-            return;
         }
-        volver(p);
+        volverFisico(p, 0f, vy);
     }
 
-    private void horizontal(int obj, float dx) {
+    private void horizontal(int obj, float dx, float vx) {
         Pieza p = piezaDe(obj);
         if (obj == 3 && cardEv != null) {
             if (cardEv.tipo == Evento.MUSICA && cardEv.control != null) {
@@ -2722,27 +3164,30 @@ final class Isla2 {
                 } else {
                     cardEv.anterior();
                 }
-                volver(p);
+                volverFisico(p, vx, 0f);
             } else if (!cardVivo) {
-                navegar(dx < 0 ? 1 : -1);
+                navegar(dx < 0 ? 1 : -1, vx);
+            } else if (cardEv.tipo == Evento.LLAMADA && cardEv.sub == 1) {
+                volverFisico(p, vx, 0f);
             } else {
-                volver(p);
+                cerrarCard();
             }
             return;
         }
-        if (obj == 1 && p != null && p.clase == 2) {
-            volverSinReanudar(p);
-            if (trans == banner) trans = null;
-            banner = null;
-            cancelar(bannerPend);
-            bannerPend = null;
-            aplicar();
+        if (p == null) return;
+        if (obj == 1 && p.clase == 2) {
+            descartarBanner();
+            volverFisico(p, vx, 0f);
             return;
         }
-        volver(p);
+        Evento ev = p.ev;
+        if (ev != null && ocultarVivo(ev)) {
+            aplicar();
+        }
+        volverFisico(p, vx, 0f);
     }
 
-    private void navegar(int dir) {
+    private void navegar(int dir, float vx) {
         Evento a = cardEv;
         if (a == null) return;
         int i = -1;
@@ -2755,11 +3200,13 @@ final class Isla2 {
         }
         int destino = i < 0 ? recientes.size() - 1 : i + dir;
         if (destino < 0 || destino >= recientes.size() || recientes.isEmpty()) {
-            volver(pCard);
+            dirSalida = 0;
+            volverFisico(pCard, vx, 0f);
+            reanudar();
             return;
         }
         Evento sig = recientes.get(destino);
-        volverSinReanudar(pCard);
+        dirEntrada = dirSalida;
         cardEv = sig;
         cardVivo = false;
         trans = sig;
@@ -2777,7 +3224,6 @@ final class Isla2 {
         if (a == null) return;
         if (a.tipo == Evento.MUSICA) {
             if (obj == 3) {
-                volverSinReanudar(p);
                 musicaSilenciada = true;
                 cardEv = null;
                 cardVivo = false;
