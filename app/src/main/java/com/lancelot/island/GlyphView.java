@@ -45,6 +45,8 @@ final class GlyphView extends View {
     static final int BLUETOOTH = 24;
     static final int UBICACION = 25;
     static final int RELOJ = 26;
+    static final int ESCUDO = 27;
+    static final int HOTSPOT = 28;
 
     private static final int AMARILLO = 0xFFFFD60A;
     private static final int VERDE = 0xFF34C759;
@@ -214,6 +216,12 @@ final class GlyphView extends View {
                 break;
             case RELOJ:
                 reloj(c);
+                break;
+            case ESCUDO:
+                escudo(c);
+                break;
+            case HOTSPOT:
+                hotspot(c);
                 break;
             case PLAY:
                 relleno();
@@ -780,5 +788,65 @@ final class GlyphView extends View {
         p.setColor(0xCC000000);
         c.drawCircle(12f, 9.5f, 2.4f, p);
         c.restore();
+    }
+
+    /** Escudo con visto (VPN): el visto se dibuja al entrar; si esta apagado lleva una raya. */
+    private void escudo(Canvas c) {
+        float esc = 0.82f + 0.18f * anim;
+        c.save();
+        c.scale(esc, esc, 12f, 12f);
+        trazo(2f);
+        p.setColor(color);
+        path.reset();
+        path.moveTo(12f, 3f);
+        path.lineTo(19f, 5.8f);
+        path.lineTo(19f, 11.5f);
+        path.cubicTo(19f, 16f, 16f, 19.4f, 12f, 21f);
+        path.cubicTo(8f, 19.4f, 5f, 16f, 5f, 11.5f);
+        path.lineTo(5f, 5.8f);
+        path.close();
+        c.drawPath(path, p);
+        if (activo) {
+            path.reset();
+            path.moveTo(8.8f, 12f);
+            path.lineTo(11f, 14.3f);
+            path.lineTo(15.4f, 9.4f);
+            PathMeasure pm = new PathMeasure(path, false);
+            float a2 = Math.max(0f, Math.min(1f, (anim - 0.25f) / 0.6f));
+            parcial.reset();
+            pm.getSegment(0f, pm.getLength() * a2, parcial, true);
+            c.drawPath(parcial, p);
+        } else {
+            p.setColor(ROJO);
+            c.drawLine(4.5f, 4.5f, 19.5f, 19.5f, p);
+        }
+        c.restore();
+    }
+
+    /** Punto de acceso: antena con ondas a los lados que se encienden de dentro hacia fuera. */
+    private void hotspot(Canvas c) {
+        float a = anim;
+        trazo(2f);
+        p.setColor(color);
+        float[] r = {5f, 8.6f};
+        for (int i = 0; i < 2; i++) {
+            float alfa = Math.max(0f, Math.min(1f, a * 3f - i));
+            trazo(2f);
+            p.setColor(color);
+            p.setAlpha(Math.round(255f * (activo ? alfa : 0.35f + 0.65f * alfa)));
+            rf.set(12f - r[i], 12f - r[i], 12f + r[i], 12f + r[i]);
+            c.drawArc(rf, 140f, 80f, false, p);
+            c.drawArc(rf, -40f, 80f, false, p);
+        }
+        relleno();
+        p.setColor(color);
+        c.drawCircle(12f, 12f, 2.1f, p);
+        trazo(2f);
+        p.setColor(color);
+        c.drawLine(12f, 14.6f, 12f, 21f, p);
+        if (!activo) {
+            p.setColor(ROJO);
+            c.drawLine(4.5f, 4.5f, 19.5f, 19.5f, p);
+        }
     }
 }

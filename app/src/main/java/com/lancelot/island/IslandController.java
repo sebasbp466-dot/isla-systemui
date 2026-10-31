@@ -27,7 +27,6 @@ import android.widget.FrameLayout;
 
 import java.util.ArrayList;
 
-import de.robv.android.xposed.XposedBridge;
 
 /**
  * Dibuja la isla dentro de SystemUI.
@@ -140,7 +139,7 @@ final class IslandController {
                 try {
                     largo();
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         }
@@ -164,7 +163,7 @@ final class IslandController {
                 try {
                     mostrar(e);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -192,7 +191,7 @@ final class IslandController {
                         mostrar(e);
                     }
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -206,7 +205,7 @@ final class IslandController {
                 try {
                     fijar(Evento.MUSICA, m, anunciar);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -220,7 +219,7 @@ final class IslandController {
                 try {
                     fijar(Evento.LLAMADA, l, anunciar);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -234,7 +233,7 @@ final class IslandController {
                 try {
                     fijar(Evento.CRONO, l, anunciar);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -248,7 +247,7 @@ final class IslandController {
                 try {
                     fijar(Evento.LINTERNA, l, anunciar);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -268,7 +267,7 @@ final class IslandController {
                     }
                     refrescarSiVisible(e);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -287,7 +286,7 @@ final class IslandController {
                 try {
                     i.rehacerConConfig();
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -331,7 +330,7 @@ final class IslandController {
                     i.motorActivo = false;
                     i.restaurarFijo();
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -380,7 +379,7 @@ final class IslandController {
                         restaurarFijo();
                     }
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -633,7 +632,7 @@ final class IslandController {
                     empezarRespuesta();
                 } catch (Throwable t) {
                     respondiendo = false;
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -649,7 +648,7 @@ final class IslandController {
         try {
             wm.updateViewLayout(root, params(true));
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
         final android.widget.EditText et = pill.mostrarRespuesta("Responder a " + e.titulo,
                 new IslandView.AlResponder() {
@@ -673,7 +672,7 @@ final class IslandController {
                                     ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
                     if (imm != null) imm.showSoftInput(et, 0);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         }, 250);
@@ -694,7 +693,7 @@ final class IslandController {
             android.app.RemoteInput.addResultsToIntent(e.respRi, i, b);
             e.respPi.send(ctx, 0, i);
         } catch (Throwable x) {
-            XposedBridge.log(x);
+            Registro.log(x);
         }
         terminarRespuesta(true);
     }
@@ -708,12 +707,12 @@ final class IslandController {
                             ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
             if (imm != null) imm.hideSoftInputFromWindow(pill.getWindowToken(), 0);
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
         try {
             wm.updateViewLayout(root, params(true));
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
         pill.ocultarRespuesta();
         if (enviado) {
@@ -976,7 +975,7 @@ final class IslandController {
             @Override
             public void run() {
                 if (g != gen || !shown || pill == null) return;
-                XposedBridge.log("[IslaSystemUI] cierre forzado (tipo="
+                Registro.log("[IslaSystemUI] cierre forzado (tipo="
                         + (actual != null ? actual.tipo : -1) + ")");
                 cancelarPasos();
                 if (expanded) {
@@ -1133,7 +1132,7 @@ final class IslandController {
             try {
                 p.send();
             } catch (Throwable e) {
-                XposedBridge.log(e);
+                Registro.log(e);
             }
         }
     }
@@ -1174,7 +1173,7 @@ final class IslandController {
                     try {
                         pi.send();
                     } catch (Throwable t) {
-                        XposedBridge.log(t);
+                        Registro.log(t);
                     }
                 }
             });
@@ -1231,7 +1230,7 @@ final class IslandController {
             }
             Settings.Secure.putString(ctx.getContentResolver(), IslaConfig.KEY, c.serialize());
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -1248,7 +1247,7 @@ final class IslandController {
                 try {
                     mostrar(e);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         }, 450);
@@ -1348,7 +1347,7 @@ final class IslandController {
         try {
             if (root != null) wm.removeViewImmediate(root);
         } catch (Throwable e) {
-            XposedBridge.log(e);
+            Registro.log(e);
         }
         root = null;
         pill = null;
@@ -1438,7 +1437,7 @@ final class IslandController {
         try {
             wm.updateViewLayout(root, params(grande));
         } catch (Throwable e) {
-            XposedBridge.log(e);
+            Registro.log(e);
         }
     }
 
@@ -1562,17 +1561,17 @@ final class IslandController {
         } catch (Throwable t) {
             // Algunas ROM no dejan ese tipo de ventana: se usa la de superposicion normal,
             // que queda por debajo de la barra de estado (no se puede tocar en el notch)
-            XposedBridge.log("[IslaSystemUI] ventana sobre la barra no disponible: " + t);
+            Registro.log("[IslaSystemUI] ventana sobre la barra no disponible: " + t);
             tipoVentana = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
             try {
                 wm.addView(root, params(false));
             } catch (Throwable t2) {
-                XposedBridge.log(t2);
+                Registro.log(t2);
             }
         }
         pill.activarBlur();
         pill.setCorner(cornerPx);
-        XposedBridge.log("[IslaSystemUI] ventana anadida (notch=" + cutW + "px, barra=" + sbPx
+        Registro.log("[IslaSystemUI] ventana anadida (notch=" + cutW + "px, barra=" + sbPx
                 + "px, blur=" + pill.estadoBlur() + ")");
     }
 

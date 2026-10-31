@@ -31,7 +31,7 @@ paso "2/6 Compilando en GitHub Actions"
 SHA=$(git rev-parse HEAD)
 RUN_ID=""
 for i in $(seq 1 30); do
-  RUN_ID=$(gh run list --commit "$SHA" --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
+  RUN_ID=$(gh run list --workflow build.yml --commit "$SHA" --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
   [ -n "$RUN_ID" ] && break
   sleep 2
 done

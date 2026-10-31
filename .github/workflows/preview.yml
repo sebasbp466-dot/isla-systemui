@@ -1,0 +1,72 @@
+name: preview
+
+# Vista previa: arranca un emulador Android, dispara los eventos de la isla y graba lo que se ve.
+# El resultado (capturas + video recortado) se publica en la rama "preview".
+# Si falla no afecta a la compilacion del APK (es otro workflow).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compilar APK de vista previa
+        run: gradle assembleDebug --no-daemon
+
+      - name: Herramientas
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Activar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Escenarios en el emulador
+        uses: reactivecircus/android-emulator-runner@v2
+        continue-on-error: true
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: false
+          emulator-boot-timeout: 900
+          ram-size: 4096M
+          cores: 4
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash preview/escenario.sh
+
+      - name: Recortar capturas y video
+        if: always()
+        run: bash preview/recortar.sh
+
+      - name: Publicar en la rama preview
+        if: always()
+        run: |
+          mkdir -p preview/out
+          cd preview/out
+          echo "run ${{ github.run_number }} commit ${{ github.sha }}" > LEEME.txt
+          git init -q -b preview
+          git config user.name "preview-bot"
+          git config user.email "preview-bot@users.noreply.github.com"
+          git add -A
+          git commit -q -m "vista previa de la compilacion ${{ github.run_number }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" preview

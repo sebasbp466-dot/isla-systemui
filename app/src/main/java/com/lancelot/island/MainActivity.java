@@ -408,6 +408,17 @@ public class MainActivity extends Activity {
                 cfg.dobleToque = v == 1;
             }
         });
+        seek(s, "Sensibilidad de los gestos", 50, 160, cfg.sensGestos, new Etiqueta() {
+            @Override
+            public String de(int v) {
+                return v + " %";
+            }
+        }, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.sensGestos = v;
+            }
+        });
         interruptor(s, "Horario silencioso (solo llamadas, linterna, cronómetros)", cfg.silencio,
                 new IntSetter() {
                     @Override
@@ -745,6 +756,9 @@ public class MainActivity extends Activity {
         filaPrueba(pr, "Batería caliente", 25, "Carga rápida", 26);
         filaPrueba(pr, "Temporizador", 27, "Quitar temporizador", 28);
         filaPrueba(pr, "Notif. con foto", 29, "Mensajes seguidos", 30);
+        filaPrueba(pr, "Punto de acceso", 31, "VPN", 33);
+        filaPrueba(pr, "Hotspot apagado", 32, "VPN apagada", 34);
+        filaPrueba(pr, "Auriculares con batería", 35, "Música", 4);
         boton(pr, "Quitar la llamada de prueba", CON, new View.OnClickListener() {
             @Override
             public void onClick(View v) {

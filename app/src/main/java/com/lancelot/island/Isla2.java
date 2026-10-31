@@ -39,7 +39,6 @@ import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.Locale;
 
-import de.robv.android.xposed.XposedBridge;
 
 /**
  * Motor de los estilos Xiaomi (Hyper Island) e iPhone, copiado del comportamiento de los videos:
@@ -150,6 +149,23 @@ final class Isla2 {
         }
     }
 
+    /** Interpolador con la curva de un muelle fisico (progreso 0..1 sin pasarse si amort >= 1). */
+    private static final class MuelleI implements TimeInterpolator {
+        private final Resorte r;
+        private final float seg;
+
+        MuelleI(float respuesta, float amort, float duracionSeg) {
+            this.r = new Resorte(respuesta, amort);
+            this.seg = duracionSeg;
+        }
+
+        @Override
+        public float getInterpolation(float t) {
+            if (t >= 1f) return 1f;
+            return 1f - r.pos(1f, 0f, t * seg);
+        }
+    }
+
     // ------------------------------------------------------------------ estado
 
     private static final int TIPO_SOBRE_BARRA = 2024; // TYPE_NAVIGATION_BAR_PANEL
@@ -215,6 +231,11 @@ final class Isla2 {
     private int winW;
     private int winH;
     private boolean ventanaAmplia;
+    /** La ventana es fija y ancha y la region tactil limita donde se reciben los toques. */
+    private boolean regionOk;
+    private Object regionOyente;
+    /** Alto fijo de la ventana en modo region: cabe la tarjeta mas alta y nunca cambia. */
+    private int winMax;
     private int animsActivas;
     private final ArrayList<Pieza> piezasSalientes = new ArrayList<>();
 
@@ -338,26 +359,26 @@ final class Isla2 {
                     r.run();
                     fallos = 0;
                 } catch (Throwable t) {
-                    XposedBridge.log("[IslaSystemUI] motor2: " + t);
-                    XposedBridge.log(t);
+                    Registro.log("[IslaSystemUI] motor2: " + t);
+                    Registro.log(t);
                     fallos++;
                     if (fallos >= 3) {
                         roto = true;
                         try {
                             quitarTodo();
                         } catch (Throwable t2) {
-                            XposedBridge.log(t2);
+                            Registro.log(t2);
                         }
                         try {
                             IslandController.motorRoto();
                         } catch (Throwable t3) {
-                            XposedBridge.log(t3);
+                            Registro.log(t3);
                         }
                     } else {
                         try {
                             quitarTodo();
                         } catch (Throwable t2) {
-                            XposedBridge.log(t2);
+                            Registro.log(t2);
                         }
                     }
                 }
@@ -651,7 +672,7 @@ final class Isla2 {
                     banner = null;
                     aplicar();
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         };
@@ -668,7 +689,7 @@ final class Isla2 {
                 try {
                     cerrarCard();
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         };
@@ -758,6 +779,7 @@ final class Isla2 {
         cardX = px(25);
         cardW = scrW - 2 * cardX;
         cardTop = topP + hP + px(16);
+        winMax = cardTop + px(308) + px(16) + dp(48);
         banW = Math.max(Math.round(scrW * 0.637f), idleW + px(70));
     }
 
@@ -828,25 +850,148 @@ final class Isla2 {
                 try {
                     return toque(ev);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                     return false;
                 }
             }
         });
-        winX = Math.max(0, pillCx - idleW / 2 - px(10));
-        winW = idleW + px(20);
-        winH = topP + hP + px(10);
+        // Ventana fija y ancha: nada se mueve ni se redimensiona al cambiar de estado (eso era lo
+        // que hacia saltar la isla hacia el reloj). Los toques fuera de las piezas los limita
+        // la region tactil; si el sistema no la admite se vuelve a la ventana que se encoge.
+        final boolean fija = regionDisponible();
+        winX = fija ? 0 : Math.max(0, pillCx - idleW / 2 - px(10));
+        winW = fija ? scrW : idleW + px(20);
+        winH = fija ? winMax : topP + hP + px(10);
+        FrameLayout.LayoutParams ilp0 = (FrameLayout.LayoutParams) inner.getLayoutParams();
+        ilp0.height = winH;
+        inner.setLayoutParams(ilp0);
         ventanaAmplia = false;
+        regionOk = false;
         try {
             wm.addView(root, params());
         } catch (Throwable t) {
-            XposedBridge.log("[IslaSystemUI] motor2: ventana sobre la barra no disponible: " + t);
+            Registro.log("[IslaSystemUI] motor2: ventana sobre la barra no disponible: " + t);
             tipoVentana = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
             wm.addView(root, params());
         }
+        if (fija) {
+            regionOk = instalarRegion();
+            if (!regionOk) {
+                // Sin region tactil no se puede dejar una ventana ancha: se estrecha (aun sin piezas)
+                int x = Math.max(0, pillCx - idleW / 2 - px(10));
+                ponerVentana(x, idleW + px(20), topP + hP + px(10));
+            }
+        }
         inner.setTranslationX(-winX);
-        XposedBridge.log("[IslaSystemUI] motor2: ventana anadida (notch=" + cutW + "px, k=" + k
-                + ")");
+        Registro.log("[IslaSystemUI] motor2: ventana anadida (notch=" + cutW + "px, k=" + k
+                + ", region=" + regionOk + ") pillCx=" + pillCx + " y=" + topP
+                + " h=" + hP + " cardTop=" + cardTop + " scrW=" + scrW);
+    }
+
+    // ---- region tactil (ventana fija)
+
+    private boolean regionDisponible() {
+        try {
+            Class<?> iface = Class.forName(
+                    "android.view.ViewTreeObserver$OnComputeInternalInsetsListener");
+            Class<?> info = Class.forName("android.view.ViewTreeObserver$InternalInsetsInfo");
+            info.getMethod("setTouchableInsets", int.class);
+            info.getField("touchableRegion");
+            android.view.ViewTreeObserver.class.getMethod("addOnComputeInternalInsetsListener",
+                    iface);
+            return true;
+        } catch (Throwable t) {
+            Registro.log("[IslaSystemUI] motor2: sin region tactil: " + t);
+            return false;
+        }
+    }
+
+    /** Dice al sistema que solo las piezas de la isla reciben toques; el resto pasa a la barra. */
+    private boolean instalarRegion() {
+        try {
+            final Class<?> iface = Class.forName(
+                    "android.view.ViewTreeObserver$OnComputeInternalInsetsListener");
+            final Class<?> info = Class.forName("android.view.ViewTreeObserver$InternalInsetsInfo");
+            final java.lang.reflect.Method fijar = info.getMethod("setTouchableInsets", int.class);
+            final java.lang.reflect.Field campo = info.getField("touchableRegion");
+            java.lang.reflect.Method anadir = android.view.ViewTreeObserver.class.getMethod(
+                    "addOnComputeInternalInsetsListener", iface);
+            java.lang.reflect.InvocationHandler ih = new java.lang.reflect.InvocationHandler() {
+                @Override
+                public Object invoke(Object proxy, java.lang.reflect.Method m, Object[] a) {
+                    String n = m.getName();
+                    if ("onComputeInternalInsets".equals(n)) {
+                        try {
+                            Object inf = a[0];
+                            fijar.invoke(inf, 3); // TOUCHABLE_INSETS_REGION
+                            regionTactil((android.graphics.Region) campo.get(inf));
+                        } catch (Throwable t) {
+                            Registro.log(t);
+                        }
+                        return null;
+                    }
+                    if ("hashCode".equals(n)) return System.identityHashCode(proxy);
+                    if ("equals".equals(n)) return proxy == a[0];
+                    if ("toString".equals(n)) return "IslaRegion";
+                    return null;
+                }
+            };
+            Object oyente = java.lang.reflect.Proxy.newProxyInstance(iface.getClassLoader(),
+                    new Class<?>[]{iface}, ih);
+            anadir.invoke(root.getViewTreeObserver(), oyente);
+            regionOyente = oyente;
+            return true;
+        } catch (Throwable t) {
+            Registro.log("[IslaSystemUI] motor2: no se pudo limitar la zona tactil: " + t);
+            return false;
+        }
+    }
+
+    private int regionFuera;
+
+    /**
+     * Seguridad: si llegan toques fuera de la region, el sistema no la esta respetando y la
+     * ventana ancha taparia la barra de estado; se vuelve a la ventana estrecha.
+     */
+    private void comprobarRegion(float x, float y) {
+        if (!regionOk) return;
+        try {
+            android.graphics.Region r = new android.graphics.Region();
+            regionTactil(r);
+            if (r.contains(Math.round(x), Math.round(y))) {
+                regionFuera = 0;
+                return;
+            }
+        } catch (Throwable t) {
+            return;
+        }
+        regionFuera++;
+        if (regionFuera >= 2) {
+            Registro.log("[IslaSystemUI] motor2: el sistema no respeta la region tactil; "
+                    + "ventana estrecha");
+            regionOk = false;
+            ajustarVentana();
+        }
+    }
+
+    /** Zona que recibe toques: la pildora, el circulo y la tarjeta (con un pequeno margen). */
+    private void regionTactil(android.graphics.Region r) {
+        r.setEmpty();
+        int m = px(14);
+        int base = topP + hP + m;
+        Pieza a = pMain;
+        if (a != null && a.vivo) {
+            int ww = Math.max(a.w, a.objW);
+            r.union(new Rect(pillCx - ww / 2 - m, 0, pillCx + ww / 2 + m, base));
+        }
+        Pieza b = pCirc;
+        if (b != null && b.vivo) {
+            r.union(new Rect(b.x - m, 0, b.x + b.w + m, base));
+        }
+        Pieza c = pCard;
+        if (c != null && c.vivo) {
+            r.union(new Rect(c.x - m, Math.max(0, c.y - m), c.x + c.w + m, c.y + c.h + m));
+        }
     }
 
     private void ponerVentana(int x, int w, int alto) {
@@ -863,7 +1008,7 @@ final class Isla2 {
         try {
             wm.updateViewLayout(root, params());
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -879,6 +1024,17 @@ final class Isla2 {
             int ch = alturaCard(cardEv != null ? cardEv : (pCard != null ? pCard.ev : null));
             bottom = Math.max(bottom, cardTop + Math.max(ch, pCard != null ? pCard.h : 0)
                     + px(16));
+        }
+        // Las piezas que se estan yendo se ven hasta el final: antes la ventana se encogia en
+        // cuanto se cerraba la tarjeta y la recortaba a medio camino (el "fantasma" sobre el reloj)
+        for (int i = 0; i < piezasSalientes.size(); i++) {
+            Pieza s = piezasSalientes.get(i);
+            bottom = Math.max(bottom, s.y + s.h + dp(44));
+        }
+        if (regionOk) {
+            ponerVentana(0, scrW, Math.max(bottom, winMax));
+            if (root != null) root.invalidate();
+            return;
         }
         if (amplia) {
             ponerVentana(0, scrW, bottom);
@@ -937,7 +1093,7 @@ final class Isla2 {
                 try {
                     if (p != null) p.f((Float) a.getAnimatedValue());
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -959,7 +1115,7 @@ final class Isla2 {
                     if (!cancelada && p != null) p.f(1f);
                     if (fin != null) fin.f(cancelada);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
                 if (animsActivas == 0) {
                     h.post(new Runnable() {
@@ -968,7 +1124,7 @@ final class Isla2 {
                             try {
                                 ajustarVentana();
                             } catch (Throwable t) {
-                                XposedBridge.log(t);
+                                Registro.log(t);
                             }
                         }
                     });
@@ -1149,7 +1305,7 @@ final class Isla2 {
         try {
             inner.removeView(p.capa);
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -1165,7 +1321,7 @@ final class Isla2 {
             try {
                 wm.removeViewImmediate(root);
             } catch (Throwable t) {
-                XposedBridge.log(t);
+                Registro.log(t);
             }
         }
         if (pMain != null) pMain.vivo = false;
@@ -1178,6 +1334,8 @@ final class Isla2 {
         pCard = null;
         piezasSalientes.clear();
         ventanaAmplia = false;
+        regionOk = false;
+        regionOyente = null;
         animsActivas = 0;
         respondiendo = false;
     }
@@ -1754,39 +1912,46 @@ final class Isla2 {
         final float rx0 = c0.getRotationX();
         final float ry0 = c0.getRotationY();
         final float b0 = p.blur;
-        if (ios && !cambio) {
+        if (!cambio) {
+            // La tarjeta se pliega dentro de la pildora (o de la camara si ya no queda nada):
+            // parte de donde este (arrastrada, inclinada, a medio desvanecer) y nunca se aleja
+            // de la isla, ni sube hasta el reloj. Es la misma forma que se encoge, no otra pieza.
             final int x0 = p.x;
             final int y0 = p.y;
             final int w0 = p.w;
             final int h0 = p.h;
-            final int w1 = pMain != null ? pMain.w : idleW;
+            final float r0 = p.r;
+            final int w1 = pMain != null && pMain.vivo ? Math.max(pMain.objW, px(60)) : idleW;
             final int x1 = pillCx - w1 / 2;
-            if (p.actual != null) {
-                final Capa c = p.actual;
-                tween(0, (long) (110 * ts()), null, new Paso() {
+            final Capa cc = p.actual;
+            if (cc != null) {
+                tween(0, (long) (120 * ts()), null, new Paso() {
                     @Override
                     public void f(float t) {
-                        c.setAlpha(1f - t);
-                        desenfocar(c, 12f * t);
+                        cc.setAlpha(1f - t);
+                        desenfocar(cc, 12f * t);
                     }
                 }, null);
             }
-            tween(0, (long) (330 * ts()), new DecelerateInterpolator(1.6f), new Paso() {
+            tween(0, (long) (400 * ts()), new MuelleI(0.30f, 1f, 0.40f), new Paso() {
                 @Override
                 public void f(float t) {
                     int w = Math.max(px(40), Math.round(w0 + (w1 - w0) * t));
                     int hh = Math.max(px(30), Math.round(h0 + (hP - h0) * t));
                     int xx = Math.round(x0 + (x1 - x0) * t);
                     int yy = Math.round(y0 + (topP - y0) * t);
-                    p.colocar(xx, yy, w, hh, Math.min(hh / 2f, radioCard(h0)
-                            + (hP / 2f - radioCard(h0)) * t));
+                    float rr = r0 + (hP / 2f - r0) * t;
+                    p.colocar(xx, yy, w, hh, Math.min(hh / 2f, rr));
                     p.capa.setTranslationX(tx0 * (1f - t));
                     p.capa.setTranslationY(ty0 * (1f - t));
                     p.capa.setScaleX(sx0 + (1f - sx0) * t);
                     p.capa.setScaleY(sy0 + (1f - sy0) * t);
                     p.capa.setRotationX(rx0 * (1f - t));
                     p.capa.setRotationY(ry0 * (1f - t));
-                    p.capa.setAlpha(a0 * (t > 0.8f ? (1f - t) * 5f : 1f));
+                    ponerBlur(p, b0 * (1f - limitar(t * 1.6f, 0f, 1f)));
+                    // si la arrastraron, recupera el cuerpo al soltarla; al llegar se funde con la pildora
+                    float cuerpo = a0 + (1f - a0) * limitar(t * 2.5f, 0f, 1f);
+                    p.capa.setAlpha(cuerpo * (1f - limitar((t - 0.72f) / 0.28f, 0f, 1f)));
                 }
             }, new Fin() {
                 @Override
@@ -1845,7 +2010,7 @@ final class Isla2 {
                 tick(pCirc);
                 tick(pCard);
             } catch (Throwable t) {
-                XposedBridge.log(t);
+                Registro.log(t);
             }
             iniciarReloj();
         }
@@ -2258,7 +2423,7 @@ final class Isla2 {
                         e.botonRun[i].run();
                     }
                 } catch (Throwable t2) {
-                    XposedBridge.log(t2);
+                    Registro.log(t2);
                 }
                 if (cierra) {
                     cerrarCard();
@@ -2314,7 +2479,7 @@ final class Isla2 {
                     try {
                         e.botonRun[1].run();
                     } catch (Throwable t) {
-                        XposedBridge.log(t);
+                        Registro.log(t);
                     }
                     reiniciarCard();
                 }
@@ -2342,7 +2507,7 @@ final class Isla2 {
                             e.botonRun[0].run();
                         }
                     } catch (Throwable t) {
-                        XposedBridge.log(t);
+                        Registro.log(t);
                     }
                     cerrarCard();
                 }
@@ -2520,7 +2685,7 @@ final class Isla2 {
                             e.botonRun[idx].run();
                         }
                     } catch (Throwable t) {
-                        XposedBridge.log(t);
+                        Registro.log(t);
                     }
                     cerrarCard();
                 }
@@ -2568,7 +2733,7 @@ final class Isla2 {
                                     ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
                     if (imm != null) imm.showSoftInput(et, 0);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         }, 320);
@@ -2585,7 +2750,7 @@ final class Isla2 {
         try {
             wm.updateViewLayout(root, params());
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
         aplicar();
     }
@@ -2605,7 +2770,7 @@ final class Isla2 {
             android.app.RemoteInput.addResultsToIntent(e.respRi, i, b);
             e.respPi.send(ctx, 0, i);
         } catch (Throwable x) {
-            XposedBridge.log(x);
+            Registro.log(x);
         }
         terminarRespuesta(true);
     }
@@ -2618,12 +2783,12 @@ final class Isla2 {
                             ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
             if (imm != null && root != null) imm.hideSoftInputFromWindow(root.getWindowToken(), 0);
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
         try {
             if (root != null) wm.updateViewLayout(root, params());
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -2665,7 +2830,7 @@ final class Isla2 {
                     soltarInclinacion(piezaDe(objetivo));
                     largo(objetivo);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         }
@@ -2721,7 +2886,11 @@ final class Isla2 {
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: {
                 objetivo = hit(rx, ry);
-                if (objetivo == 0) return false;
+                if (objetivo == 0) {
+                    comprobarRegion(rx, ry);
+                    return false;
+                }
+                regionFuera = 0;
                 dX = rx;
                 dY = ry;
                 moviendo = false;
@@ -2830,7 +2999,7 @@ final class Isla2 {
                 try {
                     if (!arrastrando) ajustarVentana();
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         }, 120);
@@ -2853,15 +3022,16 @@ final class Isla2 {
         // 80 ms de inercia: un golpe rapido corto tambien cuenta
         float pdx = dx + vx * 0.08f;
         float pdy = dy + vy * 0.08f;
-        float umH = card ? dp(80) : dp(52);
-        float umU = card ? umbralArriba(p) : dp(34);
+        float sens = 100f / Math.max(50, Math.min(160, cfg.sensGestos));
+        float umH = (card ? dp(80) : dp(52)) * sens;
+        float umU = (card ? umbralArriba(p) : dp(34)) * sens;
         if (eje == 2 && Math.abs(pdx) > umH) {
             dirSalida = pdx < 0 ? 2 : 3;
             horizontal(obj, pdx, vx);
         } else if (eje == 1 && pdy < -umU) {
             dirSalida = 1;
             arriba(obj, vy);
-        } else if (eje == 1 && pdy > (card ? dp(52) : dp(24))) {
+        } else if (eje == 1 && pdy > (card ? dp(52) : dp(24)) * sens) {
             if (card) {
                 dirSalida = 4;
                 abajoCard();
@@ -3070,7 +3240,7 @@ final class Isla2 {
                     try {
                         b.accion.send();
                     } catch (Throwable t) {
-                        XposedBridge.log(t);
+                        Registro.log(t);
                     }
                 }
                 if (trans == b) trans = null;
@@ -3104,7 +3274,7 @@ final class Isla2 {
             try {
                 pi.send();
             } catch (Throwable t) {
-                XposedBridge.log(t);
+                Registro.log(t);
             }
         }
     }
@@ -3253,7 +3423,7 @@ final class Isla2 {
                     try {
                         pi.send();
                     } catch (Throwable t) {
-                        XposedBridge.log(t);
+                        Registro.log(t);
                     }
                 }
             });
@@ -3312,7 +3482,7 @@ final class Isla2 {
             }
             Settings.Secure.putString(ctx.getContentResolver(), IslaConfig.KEY, c.serialize());
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -3338,7 +3508,7 @@ final class Isla2 {
                 try {
                     mostrarInterno(e);
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         }, 450);

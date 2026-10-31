@@ -19,6 +19,10 @@ import android.graphics.drawable.Drawable;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.media.AudioManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSession;
@@ -34,7 +38,6 @@ import android.service.notification.StatusBarNotification;
 import java.util.HashMap;
 import java.util.concurrent.Executor;
 
-import de.robv.android.xposed.XposedBridge;
 
 /**
  * Fuentes de eventos de la isla. Todo es por receptores y callbacks (nada de sondeo):
@@ -46,6 +49,9 @@ final class Eventos {
     private static final String PERMISO_PRUEBA = "android.permission.WRITE_SECURE_SETTINGS";
     private static final String TAG = "[IslaSystemUI] ";
     private static final String ACCION_VOLUMEN = "android.media.VOLUME_CHANGED_ACTION";
+    private static final String ACCION_AP = "android.net.wifi.WIFI_AP_STATE_CHANGED";
+    private static final String ACCION_BT_BATERIA =
+            "android.bluetooth.device.action.BATTERY_LEVEL_CHANGED";
     private static final String EXTRA_TIPO_VOL = "android.media.EXTRA_VOLUME_STREAM_TYPE";
     private static final String EXTRA_VALOR_VOL = "android.media.EXTRA_VOLUME_STREAM_VALUE";
 
@@ -73,6 +79,10 @@ final class Eventos {
     private static Boolean ultimoAhorro;
     private static Boolean ultimoWifi;
     private static Boolean ultimoBt;
+    private static Boolean ultimoAp;
+    private static Boolean ultimoVpn;
+    private static long ignoraVpnHasta;
+    private static BluetoothDevice btDispositivo;
     private static boolean calienteAvisado;
     private static boolean camaraActiva;
     private static boolean microActivo;
@@ -95,10 +105,10 @@ final class Eventos {
         IslaConfig.get(ctx);
         try {
             registrar();
-            XposedBridge.log(TAG + "eventos iniciados");
+            Registro.log(TAG + "eventos iniciados");
             isla().pantalla(true);
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -125,17 +135,20 @@ final class Eventos {
         f.addAction(ACCION_VOLUMEN);
         f.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
         f.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
+        f.addAction(ACCION_AP);
+        f.addAction(ACCION_BT_BATERIA);
         ctx.registerReceiver(receptor, f, null, h, Context.RECEIVER_NOT_EXPORTED);
 
         iniciarPrivacidad();
         iniciarPortapapeles();
+        iniciarVpn();
 
         // Para probar desde la app o desde Termux: solo lo puede enviar quien tenga el permiso
         try {
             ctx.registerReceiver(prueba, new IntentFilter(ACCION_PRUEBA), PERMISO_PRUEBA, h,
                     Context.RECEIVER_EXPORTED);
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
 
         try {
@@ -159,7 +172,7 @@ final class Eventos {
                 }
             }, h);
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -212,6 +225,12 @@ final class Eventos {
                     case BluetoothAdapter.ACTION_STATE_CHANGED:
                         bluetoothEstado(i.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1));
                         break;
+                    case ACCION_AP:
+                        puntoAcceso(i.getIntExtra("wifi_state", -1));
+                        break;
+                    case ACCION_BT_BATERIA:
+                        bateriaBluetooth(i);
+                        break;
                     case ACCION_VOLUMEN:
                         volumen(i.getIntExtra(EXTRA_TIPO_VOL, -1),
                                 i.getIntExtra(EXTRA_VALOR_VOL, -1));
@@ -220,7 +239,7 @@ final class Eventos {
                         break;
                 }
             } catch (Throwable t) {
-                XposedBridge.log(t);
+                Registro.log(t);
             }
         }
     };
@@ -376,7 +395,7 @@ final class Eventos {
                             isla().actualizarMismoTipo(evCarga(i));
                         }
                     } catch (Throwable t) {
-                        XposedBridge.log(t);
+                        Registro.log(t);
                     }
                 }
             };
@@ -386,7 +405,7 @@ final class Eventos {
                         Context.RECEIVER_NOT_EXPORTED);
             } catch (Throwable t) {
                 receptorBateria = null;
-                XposedBridge.log(t);
+                Registro.log(t);
             }
         } else if (receptorBateria != null) {
             try {
@@ -419,7 +438,7 @@ final class Eventos {
             CameraManager cm = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
             cm.setTorchMode(torchId, false);
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -431,7 +450,7 @@ final class Eventos {
             CameraManager cm = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
             cm.turnOnTorchWithStrengthLevel(torchId, siguiente);
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -561,16 +580,76 @@ final class Eventos {
 
     private static void bluetooth(Intent i, boolean conectado) {
         String nombre = null;
+        BluetoothDevice d = null;
         try {
-            BluetoothDevice d = i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE,
-                    BluetoothDevice.class);
+            d = i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class);
             if (d != null) nombre = d.getName();
         } catch (Throwable ignorado) {
             // sin permiso o sin nombre: se muestra un titulo generico
         }
         if (repetido("bt" + nombre + conectado)) return;
-        isla().show(evAuric(nombre != null ? nombre : "Bluetooth",
-                conectado ? "Conectado" : "Desconectado"));
+        if (!conectado) {
+            btDispositivo = null;
+            Evento e = evAuric(nombre != null ? nombre : "Bluetooth", "Desconectado");
+            e.clave = "bt:" + nombre;
+            isla().show(e);
+            return;
+        }
+        btDispositivo = d;
+        final String titulo = nombre != null ? nombre : "Bluetooth";
+        int bat = nivelBluetooth(d);
+        isla().show(evBluetooth(titulo, bat));
+        if (bat < 0 && d != null) {
+            // Los auriculares suelen informar la bateria un par de segundos despues de conectar
+            final BluetoothDevice dd = d;
+            h.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        if (btDispositivo == null || !btDispositivo.equals(dd)) return;
+                        int b2 = nivelBluetooth(dd);
+                        if (b2 >= 0) isla().show(evBluetooth(titulo, b2));
+                    } catch (Throwable t) {
+                        Registro.log(t);
+                    }
+                }
+            }, 2200);
+        }
+    }
+
+    /** Llego el nivel de bateria de un dispositivo conectado: se actualiza el aviso en el sitio. */
+    private static void bateriaBluetooth(Intent i) {
+        try {
+            BluetoothDevice d = i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE,
+                    BluetoothDevice.class);
+            int nivel = i.getIntExtra("android.bluetooth.device.extra.BATTERY_LEVEL", -1);
+            if (d == null || btDispositivo == null || !btDispositivo.equals(d) || nivel < 0) {
+                return;
+            }
+            if (repetido("btbat" + d + nivel)) return;
+            String nombre = d.getName();
+            isla().show(evBluetooth(nombre != null ? nombre : "Bluetooth", nivel));
+        } catch (Throwable t) {
+            Registro.log(t);
+        }
+    }
+
+    /** Bateria del dispositivo (0..100) o -1 si no la informa. Metodo oculto: por reflexion. */
+    private static int nivelBluetooth(BluetoothDevice d) {
+        if (d == null) return -1;
+        try {
+            Object r = BluetoothDevice.class.getMethod("getBatteryLevel").invoke(d);
+            return r instanceof Integer ? (Integer) r : -1;
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    private static Evento evBluetooth(String nombre, int bat) {
+        Evento e = evAuric(nombre, bat >= 0 ? "Conectado \u00B7 " + bat + "%" : "Conectado");
+        e.clave = "bt:" + nombre;
+        if (bat >= 0) e.nivel = bat;
+        return e;
     }
 
     // ------------------------------------------------------------------ ajustes rapidos
@@ -642,6 +721,57 @@ final class Eventos {
                 on ? "Activado" : "Desactivado"));
     }
 
+    /** Punto de acceso (hotspot): 11 apagado, 13 encendido; los demas son estados de paso. */
+    private static void puntoAcceso(int estado) {
+        if (estado != 11 && estado != 13) return;
+        boolean on = estado == 13;
+        if (ultimoAp != null && ultimoAp == on) return;
+        ultimoAp = on;
+        isla().show(evAjuste(GlyphView.HOTSPOT, VERDE, on, "Punto de acceso",
+                on ? "Activado" : "Desactivado"));
+    }
+
+    private static void iniciarVpn() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(
+                    Context.CONNECTIVITY_SERVICE);
+            NetworkRequest rq = new NetworkRequest.Builder()
+                    .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                    .build();
+            // Al registrar, el sistema avisa de las VPN que ya estaban: se ignora un instante
+            ignoraVpnHasta = SystemClock.uptimeMillis() + 2500;
+            cm.registerNetworkCallback(rq, new ConnectivityManager.NetworkCallback() {
+                @Override
+                public void onAvailable(Network red) {
+                    vpn(true);
+                }
+
+                @Override
+                public void onLost(Network red) {
+                    vpn(false);
+                }
+            }, h);
+        } catch (Throwable t) {
+            Registro.log(TAG + "sin aviso de VPN: " + t);
+        }
+    }
+
+    private static void vpn(boolean on) {
+        try {
+            if (SystemClock.uptimeMillis() < ignoraVpnHasta) {
+                ultimoVpn = on;
+                return;
+            }
+            if (ultimoVpn != null && ultimoVpn == on) return;
+            ultimoVpn = on;
+            isla().show(evAjuste(GlyphView.ESCUDO, on ? VERDE : 0xFFFFFFFF, on, "VPN",
+                    on ? "Conectada" : "Desconectada"));
+        } catch (Throwable t) {
+            Registro.log(t);
+        }
+    }
+
     private static Evento evVolumen(int tipo, int valor) {
         AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
         int max = Math.max(1, am.getStreamMaxVolume(tipo));
@@ -700,7 +830,7 @@ final class Eventos {
                     });
         } catch (Throwable t) {
             // Sin el permiso WATCH_APPOPS no hay aviso de camara y microfono
-            XposedBridge.log(TAG + "sin aviso de camara/microfono: " + t);
+            Registro.log(TAG + "sin aviso de camara/microfono: " + t);
         }
     }
 
@@ -726,7 +856,7 @@ final class Eventos {
             e.duracionMs = 3500;
             isla().show(e);
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -761,12 +891,12 @@ final class Eventos {
                         e.duracionMs = 1800;
                         isla().show(e);
                     } catch (Throwable t) {
-                        XposedBridge.log(t);
+                        Registro.log(t);
                     }
                 }
             });
         } catch (Throwable t) {
-            XposedBridge.log(t);
+            Registro.log(t);
         }
     }
 
@@ -791,7 +921,7 @@ final class Eventos {
                     r.mc.registerCallback(r, h);
                     r.actualizar();
                 } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    Registro.log(t);
                 }
             }
         });
@@ -966,7 +1096,7 @@ final class Eventos {
                     h.postDelayed(pausa, 5000);
                 }
             } catch (Throwable t) {
-                XposedBridge.log(t);
+                Registro.log(t);
             }
         }
     }
@@ -1175,6 +1305,24 @@ final class Eventos {
                         isla().show(e);
                         break;
                     }
+                    case 31:
+                        isla().show(evAjuste(GlyphView.HOTSPOT, VERDE, true, "Punto de acceso",
+                                "Activado"));
+                        break;
+                    case 32:
+                        isla().show(evAjuste(GlyphView.HOTSPOT, VERDE, false, "Punto de acceso",
+                                "Desactivado"));
+                        break;
+                    case 33:
+                        isla().show(evAjuste(GlyphView.ESCUDO, VERDE, true, "VPN", "Conectada"));
+                        break;
+                    case 34:
+                        isla().show(evAjuste(GlyphView.ESCUDO, 0xFFFFFFFF, false, "VPN",
+                                "Desconectada"));
+                        break;
+                    case 35:
+                        isla().show(evBluetooth("Auriculares de prueba", nivel));
+                        break;
                     case 22: {
                         Evento e = new Evento(Evento.PORTAPAPELES);
                         e.glifo = GlyphView.PORTAPAPELES;
@@ -1189,7 +1337,7 @@ final class Eventos {
                         break;
                 }
             } catch (Throwable t) {
-                XposedBridge.log(t);
+                Registro.log(t);
             }
         }
     };

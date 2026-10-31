@@ -78,6 +78,8 @@ final class IslaConfig {
     /** Isla permanente: queda siempre una capsula oscura alrededor del notch. */
     boolean permanente = false;
     boolean dobleToque = true;
+    /** Sensibilidad de los gestos (50..160 %): mas alta = basta un deslizamiento mas corto. */
+    int sensGestos = 100;
     /** Experimental: no mostrar la isla cuando la barra de estado esta oculta. */
     boolean ocultarFs = false;
     /** Horario silencioso: solo llamadas, linterna y cronometros. */
@@ -307,6 +309,9 @@ final class IslaConfig {
                     case "dt":
                         dobleToque = "1".equals(v);
                         break;
+                    case "gs":
+                        sensGestos = clamp(Integer.parseInt(v), 50, 160);
+                        break;
                     case "sl":
                         silencio = "1".equals(v);
                         break;
@@ -373,6 +378,7 @@ final class IslaConfig {
                 + ";nd=" + b(noMolestarMin)
                 + ";pm=" + b(permanente)
                 + ";dt=" + b(dobleToque)
+                + ";gs=" + sensGestos
                 + ";fs=" + b(ocultarFs)
                 + ";sl=" + b(silencio)
                 + ";sd=" + silencioDesde

@@ -10,8 +10,8 @@ android {
         applicationId 'com.lancelot.island'
         minSdk 30
         targetSdk 34
-        versionCode 20
-        versionName '1.10'
+        versionCode 21
+        versionName '2.0'
     }
 
     // Clave fija (de pruebas) para que cada compilacion se pueda instalar ENCIMA de la anterior
