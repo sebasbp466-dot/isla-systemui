@@ -1,0 +1,88 @@
+== escenario Tue Nov  3 11:00:56 UTC 2026
+emulador listo: sdk_gphone64_x86_64 Physical size: 1080x2400
+
+Exception occurred while executing 'enable':
+java.lang.SecurityException: commit failed: Unable to retrieve overlay information for com.android.internal.display.cutout.emulation.narrow
+	at com.android.server.om.OverlayManagerService$1.commit(OverlayManagerService.java:889)
+	at com.android.server.om.OverlayManagerShellCommand.runEnableDisable(OverlayManagerShellCommand.java:244)
+	at com.android.server.om.OverlayManagerShellCommand.onCommand(OverlayManagerShellCommand.java:87)
+	at com.android.modules.utils.BasicShellCommandHandler.exec(BasicShellCommandHandler.java:97)
+	at android.os.ShellCommand.exec(ShellCommand.java:38)
+	at com.android.server.om.OverlayManagerService$1.onShellCommand(OverlayManagerService.java:1006)
+	at android.os.Binder.shellCommand(Binder.java:1068)
+	at android.os.Binder.onTransact(Binder.java:888)
+	at android.content.om.IOverlayManager$Stub.onTransact(IOverlayManager.java:477)
+	at android.os.Binder.execTransactInternal(Binder.java:1344)
+	at android.os.Binder.execTransact(Binder.java:1275)
+Performing Streamed Install
+Success
+Starting: Intent { cmp=com.lancelot.island/.PreviewActivity }
+GEO: 11-03 11:01:17.446  4323  4323 W IslaSystemUI: [IslaSystemUI] motor2: ventana fija anadida (notch=118px, k=1.5) pillCx=551 y=18 h=115 cardTop=157 scrW=1080 winH=148 tipo=2038 confianza=false
+pildora=(551,75) tarjeta y=307 ancho=1080
+foto x01_carga_a
+foto x01_carga_b
+foto x01_carga_fuera
+foto x02_linterna_pildora
+foto x02_linterna_tarjeta
+foto x02_linterna_colapso_a
+foto x02_linterna_despues
+foto x03_musica_pildora
+foto x03_musica_abriendo
+foto x03_musica_tarjeta
+foto x03_musica_arrastre
+foto x03_musica_soltada_a
+foto x03_musica_soltada_b
+foto x03_musica_recuperada
+foto x04_colapso_0
+foto x04_colapso_1
+foto x04_colapso_2
+foto x04_colapso_final
+foto x05_musica_lado
+foto x06_notif_a
+foto x06_notif_b
+foto x07_notif_min
+foto x08_notif_grupo
+foto x09_llamada_entrante
+foto x09_llamada_curso
+foto x10_crono
+foto x10_crono_tarjeta
+foto x11_descarga
+foto x11_descarga_b
+foto x12_volumen
+foto x13_camara
+foto x14_avion
+foto x15_hotspot
+foto x16_vpn
+foto x17_bt_bateria
+foto x18_auriculares
+foto x19_bateria_baja
+foto x20_carga_rapida
+foto i01_carga_a
+foto i01_carga_b
+foto i02_musica_pildora
+foto i02_musica_abriendo
+foto i02_musica_tarjeta
+foto i03_colapso_0
+foto i03_colapso_1
+foto i03_colapso_final
+foto i04_notif_a
+foto i04_notif_b
+foto i05_llamada
+foto i06_linterna
+foto l01_carga_a
+foto l01_carga_b
+foto l02_musica_pildora
+foto l02_musica_abriendo
+foto l02_musica_tarjeta
+foto l03_boton_pulsado
+foto l03_boton_suelto
+foto l04_colapso_0
+foto l04_colapso_1
+foto l04_colapso_2
+foto l04_colapso_final
+foto l05_notif_a
+foto l05_notif_b
+foto l06_llamada
+foto l07_linterna
+foto l07_linterna_tarjeta
+== fin Tue Nov  3 11:04:57 UTC 2026
