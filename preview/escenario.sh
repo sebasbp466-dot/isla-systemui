@@ -38,7 +38,7 @@ adb shell settings put global hidden_api_policy 0
 adb shell settings put global window_animation_scale 1
 adb shell settings put global transition_animation_scale 1
 adb shell settings put global animator_duration_scale 1
-adb shell cmd overlay enable com.android.internal.display.cutout.emulation.hole
+adb shell cmd overlay enable com.android.internal.display.cutout.emulation.narrow
 dormir 6
 adb install -r -g app/build/outputs/apk/debug/app-debug.apk
 adb shell pm grant $PKG android.permission.WRITE_SECURE_SETTINGS
@@ -54,7 +54,7 @@ dormir 5
 
 # Geometria real de la isla en este emulador (se escribe en el registro al crear la ventana)
 ev 1; dormir 2.5
-GEO=$(adb logcat -d -s IslaSystemUI 2>/dev/null | grep "ventana anadida" | tail -1)
+GEO=$(adb logcat -d -s IslaSystemUI 2>/dev/null | grep "anadida" | tail -1)
 echo "GEO: $GEO"
 num() { echo "$GEO" | sed -n "s/.*$1=\([0-9]*\).*/\1/p"; }
 CX=$(num pillCx);   CX=${CX:-540}
@@ -140,6 +140,25 @@ ev 21; dormir 0.5; foto i04_notif_a; dormir 1.0; foto i04_notif_b; dormir 4.5
 ev 10; dormir 1.6; foto i05_llamada; ev 12; dormir 1.6
 ev 2; dormir 1.6; foto i06_linterna; ev 3; dormir 1.5
 rec_fin iphone
+
+# ---------------------------------------------------------------- Liquid Glass (estilo 5)
+estilo 5
+rec_ini liquid
+ev 1; dormir 0.4; foto l01_carga_a; dormir 0.6; foto l01_carga_b; dormir 3.2
+ev 4; dormir 2.2; foto l02_musica_pildora
+tocar $CX $PY; dormir 0.35; foto l02_musica_abriendo; dormir 1.0; foto l02_musica_tarjeta
+# boton de cristal (play) con el dedo apoyado: se ve la lente y el brillo
+PLX=$((SW / 2)); PLY=$((CT + 196 * SW / 720))
+adb shell input motionevent DOWN $PLX $PLY; dormir 0.5; foto l03_boton_pulsado
+adb shell input motionevent UP $PLX $PLY; dormir 0.8; foto l03_boton_suelto
+# colapso hacia arriba (el caso del salto hacia el reloj)
+desliza $CX $((CT + 200)) $CX $((CT - 30)) 150
+dormir 0.12; foto l04_colapso_0; dormir 0.15; foto l04_colapso_1; dormir 0.2; foto l04_colapso_2; dormir 1.6; foto l04_colapso_final
+ev 9; dormir 1.6
+ev 21; dormir 0.5; foto l05_notif_a; dormir 1.0; foto l05_notif_b; dormir 4.5
+ev 10; dormir 1.6; foto l06_llamada; ev 12; dormir 1.6
+ev 2; dormir 1.6; foto l07_linterna; tocar $CX $PY; dormir 1.2; foto l07_linterna_tarjeta; ev 3; dormir 1.5
+rec_fin liquid
 
 # ---------------------------------------------------------------- cierre
 kill $LOGPID 2>/dev/null

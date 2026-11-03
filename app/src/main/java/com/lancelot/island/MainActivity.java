@@ -334,7 +334,7 @@ public class MainActivity extends Activity {
 
         // ---- Estilo de la isla
         LinearLayout s = tarjeta(col, "Estilo de la isla");
-        segmentado(s, new String[]{"Hyper", "Cristal", "Neón", "Xiaomi", "iPhone"}, cfg.style,
+        segmentado(s, new String[]{"Hyper", "Cristal", "Neón", "Xiaomi", "iPhone", "Liquid"}, cfg.style,
                 new IntSetter() {
             @Override
             public void set(int v) {
@@ -408,6 +408,27 @@ public class MainActivity extends Activity {
                 cfg.dobleToque = v == 1;
             }
         });
+        texto(s, "Liquid Glass: refracción del borde, luz que sigue la inclinación del teléfono, "
+                + "botones de vidrio que se hinchan y fondo con la portada difuminada.", 12, false,
+                cSub);
+        seek(s, "Intensidad del cristal (estilo Liquid)", 0, 100, cfg.lq, new Etiqueta() {
+            @Override
+            public String de(int v) {
+                return v == 0 ? "sin refracción" : v + " %";
+            }
+        }, new IntSetter() {
+            @Override
+            public void set(int v) {
+                cfg.lq = v;
+            }
+        });
+        interruptor(s, "Ventana antigua (solo si algo no responde debajo de la isla)", cfg.winViejo,
+                new IntSetter() {
+                    @Override
+                    public void set(int v) {
+                        cfg.winViejo = v == 1;
+                    }
+                });
         seek(s, "Sensibilidad de los gestos", 50, 160, cfg.sensGestos, new Etiqueta() {
             @Override
             public String de(int v) {

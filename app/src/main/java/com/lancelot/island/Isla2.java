@@ -177,6 +177,11 @@ final class Isla2 {
     private final float density;
     private IslaConfig cfg;
     private boolean ios;
+    /** Estilo Liquid Glass: bordes de luz, refraccion, botones de vidrio y estirado liquido. */
+    private boolean glass;
+    /** Pieza de la tarjeta cuyo contenido se esta construyendo (los botones de vidrio la usan). */
+    private Pieza cardPieza;
+    private int estiloPrev = -1;
     private boolean pantallaOn = true;
     private int tipoVentana = TIPO_SOBRE_BARRA;
 
@@ -232,8 +237,9 @@ final class Isla2 {
     private int winH;
     private boolean ventanaAmplia;
     /** La ventana es fija y ancha y la region tactil limita donde se reciben los toques. */
-    private boolean regionOk;
-    private Object regionOyente;
+    /** Ventana visible fija + ventanas de toque invisibles (ver crearVentana). */
+    private boolean modoFijo;
+    private final Atrapa[] atrapas = new Atrapa[3];
     /** Alto fijo de la ventana en modo region: cabe la tarjeta mas alta y nunca cambia. */
     private int winMax;
     private int animsActivas;
@@ -779,7 +785,7 @@ final class Isla2 {
         cardX = px(25);
         cardW = scrW - 2 * cardX;
         cardTop = topP + hP + px(16);
-        winMax = cardTop + px(308) + px(16) + dp(48);
+        winMax = cardTop + px(308) + px(16) + dp(90);
         banW = Math.max(Math.round(scrW * 0.637f), idleW + px(70));
     }
 
@@ -822,20 +828,43 @@ final class Isla2 {
     // ------------------------------------------------------------------ ventana
 
     private WindowManager.LayoutParams params() {
+        int fl = (respondiendo ? 0 : WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
+        // En modo fijo la ventana visible no recibe toques (los recogen las ventanas invisibles);
+        // solo al escribir una respuesta se vuelve tocable para el teclado.
+        if (modoFijo && !respondiendo) fl |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                winW, winH, tipoVentana,
-                (respondiendo ? 0 : WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
+                winW, winH, tipoVentana, fl, PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
         lp.x = winX;
         lp.y = 0;
         lp.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         lp.setTitle("IslaSystemUI");
+        endurecer(lp);
         return lp;
+    }
+
+    /**
+     * Ajustes ocultos de la ventana (si no existen, no pasa nada): sin animacion de movimiento y,
+     * dentro de SystemUI, "ventana de confianza", para que el sistema no tome una ventana que no
+     * recibe toques como una capa que tapa la app y bloquee los toques de debajo.
+     */
+    private boolean confianza = true;
+
+    private void endurecer(WindowManager.LayoutParams lp) {
+        try {
+            java.lang.reflect.Field f = WindowManager.LayoutParams.class.getField("privateFlags");
+            int pf = f.getInt(lp) | 0x00000040; // PRIVATE_FLAG_NO_MOVE_ANIMATION
+            if (confianza && "com.android.systemui".equals(ctx.getPackageName())) {
+                pf |= 0x20000000; // PRIVATE_FLAG_TRUSTED_OVERLAY
+            }
+            f.setInt(lp, pf);
+        } catch (Throwable ignorado) {
+            // sin el campo: no hace falta
+        }
     }
 
     private void crearVentana() {
@@ -855,144 +884,207 @@ final class Isla2 {
                 }
             }
         });
-        // Ventana fija y ancha: nada se mueve ni se redimensiona al cambiar de estado (eso era lo
-        // que hacia saltar la isla hacia el reloj). Los toques fuera de las piezas los limita
-        // la region tactil; si el sistema no la admite se vuelve a la ventana que se encoge.
-        final boolean fija = regionDisponible();
-        winX = fija ? 0 : Math.max(0, pillCx - idleW / 2 - px(10));
-        winW = fija ? scrW : idleW + px(20);
-        winH = fija ? winMax : topP + hP + px(10);
+        // VENTANA FIJA: la ventana que se ve ocupa siempre el mismo sitio (ancho completo) y no
+        // recibe toques; nunca se mueve ni cambia de tamano, asi que el sistema no puede animarla
+        // (eso era lo que hacia que la isla "se fuera hacia el reloj" al minimizar). Los toques los
+        // recogen ventanas invisibles y pequenas que se ajustan a las piezas y los reenvian.
+        modoFijo = !cfg.winViejo;
+        winX = 0;
+        winW = scrW;
+        winH = topP + hP + px(10);
         FrameLayout.LayoutParams ilp0 = (FrameLayout.LayoutParams) inner.getLayoutParams();
         ilp0.height = winH;
         inner.setLayoutParams(ilp0);
         ventanaAmplia = false;
-        regionOk = false;
         try {
             wm.addView(root, params());
         } catch (Throwable t) {
-            Registro.log("[IslaSystemUI] motor2: ventana sobre la barra no disponible: " + t);
-            tipoVentana = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
-            wm.addView(root, params());
-        }
-        if (fija) {
-            regionOk = instalarRegion();
-            if (!regionOk) {
-                // Sin region tactil no se puede dejar una ventana ancha: se estrecha (aun sin piezas)
-                int x = Math.max(0, pillCx - idleW / 2 - px(10));
-                ponerVentana(x, idleW + px(20), topP + hP + px(10));
+            Registro.log("[IslaSystemUI] motor2: ventana no admitida (" + t
+                    + "); se reintenta sin ventana de confianza");
+            confianza = false;
+            try {
+                wm.addView(root, params());
+            } catch (Throwable t2) {
+                Registro.log("[IslaSystemUI] motor2: ventana sobre la barra no disponible: " + t2);
+                tipoVentana = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+                wm.addView(root, params());
             }
         }
+        for (int i = 0; i < atrapas.length; i++) atrapas[i] = new Atrapa();
         inner.setTranslationX(-winX);
-        Registro.log("[IslaSystemUI] motor2: ventana anadida (notch=" + cutW + "px, k=" + k
-                + ", region=" + regionOk + ") pillCx=" + pillCx + " y=" + topP
-                + " h=" + hP + " cardTop=" + cardTop + " scrW=" + scrW);
+        Registro.log("[IslaSystemUI] motor2: ventana fija anadida (notch=" + cutW + "px, k=" + k
+                + ") pillCx=" + pillCx + " y=" + topP + " h=" + hP + " cardTop=" + cardTop
+                + " scrW=" + scrW + " winH=" + winH + " tipo=" + tipoVentana
+                + " confianza=" + confianza);
     }
 
-    // ---- region tactil (ventana fija)
+    // ---- ventanas que recogen los toques (invisibles)
 
-    private boolean regionDisponible() {
-        try {
-            Class<?> iface = Class.forName(
-                    "android.view.ViewTreeObserver$OnComputeInternalInsetsListener");
-            Class<?> info = Class.forName("android.view.ViewTreeObserver$InternalInsetsInfo");
-            info.getMethod("setTouchableInsets", int.class);
-            info.getField("touchableRegion");
-            android.view.ViewTreeObserver.class.getMethod("addOnComputeInternalInsetsListener",
-                    iface);
-            return true;
-        } catch (Throwable t) {
-            Registro.log("[IslaSystemUI] motor2: sin region tactil: " + t);
-            return false;
-        }
-    }
+    /** Ventana transparente que solo recoge toques en una zona y los pasa a la isla. */
+    private final class Atrapa {
+        final View v;
+        boolean puesta;
+        int x;
+        int y;
+        int w;
+        int h;
 
-    /** Dice al sistema que solo las piezas de la isla reciben toques; el resto pasa a la barra. */
-    private boolean instalarRegion() {
-        try {
-            final Class<?> iface = Class.forName(
-                    "android.view.ViewTreeObserver$OnComputeInternalInsetsListener");
-            final Class<?> info = Class.forName("android.view.ViewTreeObserver$InternalInsetsInfo");
-            final java.lang.reflect.Method fijar = info.getMethod("setTouchableInsets", int.class);
-            final java.lang.reflect.Field campo = info.getField("touchableRegion");
-            java.lang.reflect.Method anadir = android.view.ViewTreeObserver.class.getMethod(
-                    "addOnComputeInternalInsetsListener", iface);
-            java.lang.reflect.InvocationHandler ih = new java.lang.reflect.InvocationHandler() {
+        Atrapa() {
+            v = new View(ctx);
+            v.setOnTouchListener(new View.OnTouchListener() {
                 @Override
-                public Object invoke(Object proxy, java.lang.reflect.Method m, Object[] a) {
-                    String n = m.getName();
-                    if ("onComputeInternalInsets".equals(n)) {
-                        try {
-                            Object inf = a[0];
-                            fijar.invoke(inf, 3); // TOUCHABLE_INSETS_REGION
-                            regionTactil((android.graphics.Region) campo.get(inf));
-                        } catch (Throwable t) {
-                            Registro.log(t);
-                        }
-                        return null;
-                    }
-                    if ("hashCode".equals(n)) return System.identityHashCode(proxy);
-                    if ("equals".equals(n)) return proxy == a[0];
-                    if ("toString".equals(n)) return "IslaRegion";
-                    return null;
+                public boolean onTouch(View vv, MotionEvent ev) {
+                    return reenviar(ev);
                 }
-            };
-            Object oyente = java.lang.reflect.Proxy.newProxyInstance(iface.getClassLoader(),
-                    new Class<?>[]{iface}, ih);
-            anadir.invoke(root.getViewTreeObserver(), oyente);
-            regionOyente = oyente;
-            return true;
-        } catch (Throwable t) {
-            Registro.log("[IslaSystemUI] motor2: no se pudo limitar la zona tactil: " + t);
-            return false;
+            });
+        }
+
+        /** Devuelve false si el sistema no deja anadir la ventana. */
+        boolean poner(int nx, int ny, int nw, int nh) {
+            if (nw <= 0 || nh <= 0) {
+                quitar();
+                return true;
+            }
+            if (puesta && nx == x && ny == y && nw == w && nh == h) return true;
+            x = nx;
+            y = ny;
+            w = nw;
+            h = nh;
+            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(w, h, tipoVentana,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSPARENT);
+            lp.gravity = Gravity.TOP | Gravity.START;
+            lp.x = x;
+            lp.y = y;
+            lp.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+            lp.setTitle("IslaSystemUI-toque");
+            endurecer(lp);
+            try {
+                if (!puesta) {
+                    // si la quitada anterior aun no se ha hecho, la ventana sigue puesta: se reutiliza
+                    if (v.getParent() != null) {
+                        wm.updateViewLayout(v, lp);
+                    } else {
+                        wm.addView(v, lp);
+                    }
+                    puesta = true;
+                } else {
+                    wm.updateViewLayout(v, lp);
+                }
+                return true;
+            } catch (Throwable t) {
+                Registro.log(t);
+                return false;
+            }
+        }
+
+        void quitar() {
+            if (!puesta) return;
+            puesta = false;
+            // la quitamos fuera del toque en curso: quitar una ventana mientras reparte su
+            // propio evento puede dar problemas
+            Isla2.this.h.post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        if (!puesta) wm.removeViewImmediate(v);
+                    } catch (Throwable t) {
+                        // ya no estaba
+                    }
+                }
+            });
         }
     }
 
-    private int regionFuera;
-
-    /**
-     * Seguridad: si llegan toques fuera de la region, el sistema no la esta respetando y la
-     * ventana ancha taparia la barra de estado; se vuelve a la ventana estrecha.
-     */
-    private void comprobarRegion(float x, float y) {
-        if (!regionOk) return;
+    /** Pasa el toque de una ventana invisible a la isla, en coordenadas de pantalla. */
+    private boolean reenviar(MotionEvent ev) {
+        View r = root;
+        if (r == null) return false;
+        MotionEvent c = MotionEvent.obtain(ev);
         try {
-            android.graphics.Region r = new android.graphics.Region();
-            regionTactil(r);
-            if (r.contains(Math.round(x), Math.round(y))) {
-                regionFuera = 0;
-                return;
-            }
+            c.offsetLocation(ev.getRawX() - ev.getX(), ev.getRawY() - ev.getY());
+            return r.dispatchTouchEvent(c);
         } catch (Throwable t) {
+            Registro.log(t);
+            return false;
+        } finally {
+            c.recycle();
+        }
+    }
+
+    private void quitarAtrapas() {
+        for (int i = 0; i < atrapas.length; i++) {
+            if (atrapas[i] != null) atrapas[i].quitar();
+        }
+    }
+
+    /** Coloca las ventanas de toque justo sobre la pildora, el circulo y la tarjeta. */
+    private void actualizarAtrapa() {
+        try {
+            actualizarAtrapaInterno();
+        } catch (Throwable t) {
+            Registro.log(t);
+        }
+    }
+
+    private void actualizarAtrapaInterno() {
+        if (root == null) return;
+        if (arrastrando || objetivo != 0) return; // no se tocan en mitad de un gesto
+        if (respondiendo || ocultoFs) {
+            quitarAtrapas();
             return;
         }
-        regionFuera++;
-        if (regionFuera >= 2) {
-            Registro.log("[IslaSystemUI] motor2: el sistema no respeta la region tactil; "
-                    + "ventana estrecha");
-            regionOk = false;
+        int m = px(8) + 2;
+        boolean ok = true;
+        Pieza a = pMain;
+        if (a != null && a.vivo) {
+            int x0 = Math.min(a.x, pillCx - a.objW / 2);
+            int x1 = Math.max(a.x + a.w, pillCx + a.objW / 2);
+            int y0 = Math.min(a.y, topP);
+            int y1 = Math.max(a.y + a.h, topP + hP);
+            ok &= atrapas[0].poner(Math.max(0, x0 - m), Math.max(0, y0 - m),
+                    Math.min(scrW, x1 + m) - Math.max(0, x0 - m), y1 + m - Math.max(0, y0 - m));
+        } else {
+            atrapas[0].quitar();
+        }
+        Pieza b = pCirc;
+        if (b != null && b.vivo) {
+            ok &= atrapas[1].poner(Math.max(0, b.x - m), Math.max(0, b.y - m),
+                    Math.min(scrW, b.x + b.w + m) - Math.max(0, b.x - m), b.h + 2 * m);
+        } else {
+            atrapas[1].quitar();
+        }
+        Pieza c = pCard;
+        if (c != null && c.vivo) {
+            Evento ce = cardEv != null ? cardEv : c.ev;
+            int tx0 = Math.min(c.x, cardX);
+            int ty0 = Math.min(c.y, cardTop);
+            int tx1 = Math.max(c.x + c.w, cardX + cardW);
+            int ty1 = Math.max(c.y + c.h, cardTop + alturaCard(ce));
+            ok &= atrapas[2].poner(Math.max(0, tx0 - m), Math.max(0, ty0 - m),
+                    Math.min(scrW, tx1 + m) - Math.max(0, tx0 - m), ty1 + m - Math.max(0, ty0 - m));
+        } else {
+            atrapas[2].quitar();
+        }
+        if (!ok && ++fallosAtrapa >= 2) {
+            // el sistema no admite ventanas de toque: se vuelve al modo antiguo (ventana que se mueve)
+            Registro.log("[IslaSystemUI] motor2: no se pudieron anadir ventanas de toque; modo antiguo");
+            modoFijo = false;
+            quitarAtrapas();
+            try {
+                wm.updateViewLayout(root, params());
+            } catch (Throwable t) {
+                Registro.log(t);
+            }
             ajustarVentana();
         }
     }
 
-    /** Zona que recibe toques: la pildora, el circulo y la tarjeta (con un pequeno margen). */
-    private void regionTactil(android.graphics.Region r) {
-        r.setEmpty();
-        int m = px(14);
-        int base = topP + hP + m;
-        Pieza a = pMain;
-        if (a != null && a.vivo) {
-            int ww = Math.max(a.w, a.objW);
-            r.union(new Rect(pillCx - ww / 2 - m, 0, pillCx + ww / 2 + m, base));
-        }
-        Pieza b = pCirc;
-        if (b != null && b.vivo) {
-            r.union(new Rect(b.x - m, 0, b.x + b.w + m, base));
-        }
-        Pieza c = pCard;
-        if (c != null && c.vivo) {
-            r.union(new Rect(c.x - m, Math.max(0, c.y - m), c.x + c.w + m, c.y + c.h + m));
-        }
-    }
+    private int fallosAtrapa;
 
     private void ponerVentana(int x, int w, int alto) {
         if (root == null) return;
@@ -1012,7 +1104,10 @@ final class Isla2 {
         }
     }
 
-    /** Ajusta la ventana: pequeña en reposo (solo la fila), ancha con tarjeta o banner. */
+    /**
+     * Ajusta el alto de la ventana (siempre en x=0 y ancho completo, asi que nada se mueve) y las
+     * zonas de toque. Solo en el modo antiguo la ventana tambien se estrecha en reposo.
+     */
     private void ajustarVentana() {
         if (root == null) return;
         boolean amplia = cardEv != null || pCard != null || banner != null
@@ -1025,15 +1120,14 @@ final class Isla2 {
             bottom = Math.max(bottom, cardTop + Math.max(ch, pCard != null ? pCard.h : 0)
                     + px(16));
         }
-        // Las piezas que se estan yendo se ven hasta el final: antes la ventana se encogia en
-        // cuanto se cerraba la tarjeta y la recortaba a medio camino (el "fantasma" sobre el reloj)
+        // lo que se esta yendo se ve hasta el final (si no, la ventana lo recortaria a medio camino)
         for (int i = 0; i < piezasSalientes.size(); i++) {
             Pieza s = piezasSalientes.get(i);
             bottom = Math.max(bottom, s.y + s.h + dp(44));
         }
-        if (regionOk) {
-            ponerVentana(0, scrW, Math.max(bottom, winMax));
-            if (root != null) root.invalidate();
+        if (modoFijo) {
+            ponerVentana(0, scrW, amplia ? bottom : topP + hP + px(10));
+            actualizarAtrapa();
             return;
         }
         if (amplia) {
@@ -1159,14 +1253,51 @@ final class Isla2 {
         float blur;
         final ArrayList<Capa> salientes = new ArrayList<>();
 
+        Cristal.LenteView lente;
+        Cristal.BrilloView brillo;
+        private long tEst;
+        private int wEst = -1;
+        private int hEst;
+        private final Runnable asentar = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    cont.animate().scaleX(1f).scaleY(1f).setDuration(260)
+                            .setInterpolator(new android.view.animation.OvershootInterpolator(2.2f))
+                            .start();
+                } catch (Throwable t) {
+                    Registro.log(t);
+                }
+            }
+        };
+
         Pieza(Drawable fondo) {
+            this(fondo, false, false);
+        }
+
+        Pieza(Drawable fondo, boolean esCard, boolean conLente) {
             this.fondo = fondo;
             capa = new FrameLayout(ctx);
             capa.setClipChildren(false);
             capa.setClipToPadding(false);
             capa.setPadding(bleed, bleed, bleed, bleed);
             cont = new FrameLayout(ctx);
-            cont.setBackground(fondo);
+            if (glass && conLente) {
+                // el fondo lo dibuja una vista que curva el borde (refraccion tipo lente)
+                lente = new Cristal.LenteView(ctx, fondo, null, 0);
+                lente.config(px(24), px(40), 1f);
+                cont.addView(lente, new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT));
+            } else {
+                cont.setBackground(fondo);
+            }
+            if (glass) {
+                brillo = new Cristal.BrilloView(ctx, esCard, esCard ? 0.75f : 0.45f);
+                cont.addView(brillo, new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT));
+            }
             cont.setOutlineProvider(new ViewOutlineProvider() {
                 @Override
                 public void getOutline(View v, android.graphics.Outline o) {
@@ -1200,6 +1331,33 @@ final class Isla2 {
                 ((FondoTarjeta) fondo).setRadio(r);
             }
             cont.invalidateOutline();
+            if (lente != null) lente.poner(r);
+            if (brillo != null) brillo.poner(r);
+            estirar(w, h);
+        }
+
+        /** Efecto liquido: al cambiar de tamano deprisa la pieza se estira y luego se asienta. */
+        private void estirar(int nw, int nh) {
+            if (!glass) return;
+            try {
+                long ahora = SystemClock.uptimeMillis();
+                if (wEst >= 0 && ahora > tEst) {
+                    float dt = Math.max(6f, ahora - tEst);
+                    float ex = limitar((nw - wEst) / dt * 0.016f, -0.065f, 0.065f);
+                    float ey = limitar((nh - hEst) / dt * 0.016f, -0.065f, 0.065f);
+                    cont.setPivotX(nw / 2f);
+                    cont.setPivotY(nh / 2f);
+                    cont.setScaleX(1f + ex - 0.5f * ey);
+                    cont.setScaleY(1f + ey - 0.5f * ex);
+                    cont.removeCallbacks(asentar);
+                    cont.postDelayed(asentar, 70);
+                }
+                wEst = nw;
+                hEst = nh;
+                tEst = ahora;
+            } catch (Throwable t) {
+                Registro.log(t);
+            }
         }
 
         void ponerCapa(Capa c, int cw, int ch) {
@@ -1277,14 +1435,33 @@ final class Isla2 {
 
     private Pieza nuevaCard(Evento e) {
         FondoTarjeta f = new FondoTarjeta();
-        f.setBase(ios ? 0xFF000000 : 0xFF111A21);
+        f.setBase(glass ? 0xFF0A0D13 : (ios ? 0xFF000000 : 0xFF111A21));
         if (e != null && e.tipo == Evento.MUSICA) {
             f.setModo(FondoTarjeta.MUSICA, acentoMusica(e));
         } else if (e != null && e.tipo == Evento.LINTERNA) {
             f.setModo(FondoTarjeta.LINTERNA, 0xFFFFFFFF);
             f.setHalo(px(75), px(40), px(135));
         }
-        return new Pieza(f);
+        boolean lente = glass && e != null
+                && (e.tipo == Evento.MUSICA || e.tipo == Evento.LINTERNA);
+        if (glass && e != null && e.tipo == Evento.MUSICA && e.icono != null) {
+            f.setCover(Cristal.pequena(e.icono));
+        }
+        return new Pieza(f, true, lente);
+    }
+
+    /** Con otra cancion la portada borrosa del fondo cambia tambien. */
+    private void actualizarFondoCard(Pieza p, Evento e) {
+        try {
+            if (glass && p != null && p.fondo instanceof FondoTarjeta && e != null
+                    && e.tipo == Evento.MUSICA) {
+                FondoTarjeta f = (FondoTarjeta) p.fondo;
+                f.setModo(FondoTarjeta.MUSICA, acentoMusica(e));
+                f.setCover(e.icono != null ? Cristal.pequena(e.icono) : null);
+            }
+        } catch (Throwable t) {
+            Registro.log(t);
+        }
     }
 
     private int acentoMusica(Evento e) {
@@ -1317,6 +1494,14 @@ final class Isla2 {
         cardPend = null;
         h.removeCallbacks(reloj);
         relojActivo = false;
+        for (int i = 0; i < atrapas.length; i++) {
+            if (atrapas[i] != null) {
+                atrapas[i].quitar();
+                atrapas[i] = null;
+            }
+        }
+        fallosAtrapa = 0;
+        cardPieza = null;
         if (root != null) {
             try {
                 wm.removeViewImmediate(root);
@@ -1334,8 +1519,6 @@ final class Isla2 {
         pCard = null;
         piezasSalientes.clear();
         ventanaAmplia = false;
-        regionOk = false;
-        regionOyente = null;
         animsActivas = 0;
         respondiendo = false;
     }
@@ -1386,10 +1569,18 @@ final class Isla2 {
 
     private void aplicar() {
         cfg = IslaConfig.get(ctx);
-        ios = cfg.style == 4;
+        ios = cfg.style == 4 || cfg.style == 5;
+        glass = cfg.style == 5;
+        Cristal.fuerza = Math.max(0, Math.min(100, cfg.lq)) / 100f;
         if (!cfg.enabled || !pantallaOn || horizontalOculto()) {
             quitarTodo();
             return;
+        }
+        int escena = cfg.style * 2 + (cfg.winViejo ? 1 : 0);
+        if (estiloPrev != escena) {
+            // otro estilo (o tipo de ventana): se rehace la escena desde cero
+            if (root != null && estiloPrev != -1) quitarTodo();
+            estiloPrev = escena;
         }
         Evento[] fila = new Evento[2];
         calcularFila(fila);
@@ -1777,6 +1968,8 @@ final class Isla2 {
             if (pCard.ev != cardEv) {
                 pCard.ev = cardEv;
                 int ch = pCard.h;
+                cardPieza = pCard;
+                actualizarFondoCard(pCard, cardEv);
                 Capa c = contenidoCard(cardEv, cardW, ch);
                 pCard.cambiarCapa(c, cardW, ch, false, 0, 0);
             }
@@ -1795,6 +1988,7 @@ final class Isla2 {
         p.clase = 4;
         int ch = alturaCard(e);
         p.colocar(cardX, cardTop, cardW, ch, radioCard(ch));
+        cardPieza = p;
         Capa c = contenidoCard(e, cardW, ch);
         p.ponerCapa(c, cardW, ch);
         p.actual = c;
@@ -2006,6 +2200,7 @@ final class Isla2 {
             if (root == null) return;
             try {
                 ocultarEnPantallaCompleta();
+                ajustarVentana(); // red de seguridad: zonas de toque siempre al dia
                 tick(pMain);
                 tick(pCirc);
                 tick(pCard);
@@ -2026,6 +2221,7 @@ final class Isla2 {
         ocultoFs = ocultar;
         root.animate().cancel();
         root.animate().alpha(ocultar ? 0f : 1f).setDuration(220).start();
+        ajustarVentana(); // oculta: las zonas de toque se quitan para no tapar la app
     }
 
     private void tick(Pieza p) {
@@ -2534,28 +2730,25 @@ final class Isla2 {
 
         IconView ant = new IconView(ctx);
         ant.set(IconView.ANTERIOR, 0xFFFFFFFF);
-        c.addView(ant, abs(px(56), px(56), px(176), px(168)));
         final IconView pl = new IconView(ctx);
         pl.set(e.reproduciendo ? IconView.PAUSA : IconView.PLAY, 0xFFFFFFFF);
-        c.addView(pl, abs(px(56), px(56), px(307), px(168)));
         IconView sig = new IconView(ctx);
         sig.set(IconView.SIGUIENTE, 0xFFFFFFFF);
-        c.addView(sig, abs(px(56), px(56), px(438), px(168)));
-        ant.setOnClickListener(new View.OnClickListener() {
+        ponerControl(c, ant, px(176), px(168), new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 e.anterior();
                 reiniciarCard();
             }
         });
-        pl.setOnClickListener(new View.OnClickListener() {
+        ponerControl(c, pl, px(307), px(168), new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 e.alternar();
                 reiniciarCard();
             }
         });
-        sig.setOnClickListener(new View.OnClickListener() {
+        ponerControl(c, sig, px(438), px(168), new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 e.siguiente();
@@ -2582,6 +2775,24 @@ final class Isla2 {
         handle(c, w, hh);
         c.getChildAt(c.getChildCount() - 1).setLayoutParams(abs(px(110), px(6), w / 2 - px(55),
                 px(288)));
+    }
+
+    /** Control de la tarjeta de musica: icono suelto, o disco de cristal con el icono dentro. */
+    private void ponerControl(Capa c, IconView ic, int left, int top, View.OnClickListener ck) {
+        Pieza cp = cardPieza;
+        if (glass && cp != null) {
+            try {
+                Cristal.BotonView bv = new Cristal.BotonView(ctx, cp.fondo, cp.cont, px(88));
+                bv.icono(ic, px(46));
+                c.addView(bv, abs(px(88), px(88), left - px(16), top - px(16)));
+                bv.setOnClickListener(ck);
+                return;
+            } catch (Throwable t) {
+                Registro.log(t);
+            }
+        }
+        c.addView(ic, abs(px(56), px(56), left, top));
+        ic.setOnClickListener(ck);
     }
 
     private void cardLlamada(Capa c, Evento e, int w, int hh) {
@@ -2790,6 +3001,7 @@ final class Isla2 {
         } catch (Throwable t) {
             Registro.log(t);
         }
+        ajustarVentana();
     }
 
     private void terminarRespuesta(boolean enviado) {
@@ -2886,11 +3098,7 @@ final class Isla2 {
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: {
                 objetivo = hit(rx, ry);
-                if (objetivo == 0) {
-                    comprobarRegion(rx, ry);
-                    return false;
-                }
-                regionFuera = 0;
+                if (objetivo == 0) return false;
                 dX = rx;
                 dY = ry;
                 moviendo = false;
@@ -3052,6 +3260,7 @@ final class Isla2 {
     /** Pulsar: la pieza se hunde un poco y la tarjeta se inclina hacia el lado pulsado. */
     private void pulsar(Pieza p, float rx, float ry) {
         cancelarVuelta(p);
+        if (p.brillo != null) p.brillo.pulsar(true, rx - p.x, ry - p.y);
         float esc = ios ? 0.965f : 0.97f;
         p.capa.animate().cancel();
         p.capa.animate().scaleX(esc).scaleY(esc).setDuration(110)
@@ -3151,6 +3360,7 @@ final class Isla2 {
     private void volverFisico(final Pieza p, float vx, float vy) {
         if (p == null || !p.vivo) return;
         cancelarVuelta(p);
+        if (p.brillo != null) p.brillo.pulsar(false, 0f, 0f);
         final View c = p.capa;
         c.animate().cancel();
         final float tx0 = c.getTranslationX();

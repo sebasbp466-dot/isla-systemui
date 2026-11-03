@@ -17,6 +17,16 @@ command -v su >/dev/null 2>&1 || { echo "Falta root (su)"; exit 1; }
 
 paso "1/6 Subiendo a GitHub"
 [ -d .git ] || git init -b main
+if ! git remote get-url origin >/dev/null 2>&1; then
+  # Carpeta sin .git (recien descomprimida): si el repo ya existe en GitHub se reconecta sin
+  # perder nada, en vez de intentar crearlo otra vez
+  USUARIO=$(gh api user --jq .login 2>/dev/null || true)
+  if [ -n "$USUARIO" ] && gh repo view "$USUARIO/$REPO" >/dev/null 2>&1; then
+    git remote add origin "https://github.com/$USUARIO/$REPO.git"
+    git fetch -q origin main
+    git reset -q origin/main
+  fi
+fi
 git add -A
 if ! git diff --cached --quiet; then
   git commit -q -m "Isla SystemUI $(date +%F_%H:%M:%S)"

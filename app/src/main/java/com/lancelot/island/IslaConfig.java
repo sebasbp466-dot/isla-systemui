@@ -28,7 +28,7 @@ final class IslaConfig {
     int bodyColor = 0xFFCCCCCC;
     boolean showIcon = true;
     String blocked = "";
-    /** 0 Hyper, 1 Cristal, 2 Neon, 3 Xiaomi (Hyper Island), 4 iPhone */
+    /** 0 Hyper, 1 Cristal, 2 Neon, 3 Xiaomi (Hyper Island), 4 iPhone, 5 Liquid Glass */
     int style = 0;
     /** Ancho minimo de la capsula compacta, en dp. */
     int compactW = 110;
@@ -80,6 +80,10 @@ final class IslaConfig {
     boolean dobleToque = true;
     /** Sensibilidad de los gestos (50..160 %): mas alta = basta un deslizamiento mas corto. */
     int sensGestos = 100;
+    /** Intensidad del cristal del estilo Liquid Glass (0 = sin refraccion ni brillos fuertes). */
+    int lq = 70;
+    /** Seguro: vuelve a la ventana antigua (que se mueve) por si algo no respondiera bajo la isla. */
+    boolean winViejo = false;
     /** Experimental: no mostrar la isla cuando la barra de estado esta oculta. */
     boolean ocultarFs = false;
     /** Horario silencioso: solo llamadas, linterna y cronometros. */
@@ -220,7 +224,7 @@ final class IslaConfig {
                         blocked = limpiar(v);
                         break;
                     case "st":
-                        style = clamp(Integer.parseInt(v), 0, 4);
+                        style = clamp(Integer.parseInt(v), 0, 5);
                         break;
                     case "cm":
                         compactW = clamp(Integer.parseInt(v), 90, 200);
@@ -312,6 +316,12 @@ final class IslaConfig {
                     case "gs":
                         sensGestos = clamp(Integer.parseInt(v), 50, 160);
                         break;
+                    case "lq":
+                        lq = clamp(Integer.parseInt(v), 0, 100);
+                        break;
+                    case "wv":
+                        winViejo = "1".equals(v);
+                        break;
                     case "sl":
                         silencio = "1".equals(v);
                         break;
@@ -379,6 +389,8 @@ final class IslaConfig {
                 + ";pm=" + b(permanente)
                 + ";dt=" + b(dobleToque)
                 + ";gs=" + sensGestos
+                + ";lq=" + lq
+                + ";wv=" + b(winViejo)
                 + ";fs=" + b(ocultarFs)
                 + ";sl=" + b(silencio)
                 + ";sd=" + silencioDesde
